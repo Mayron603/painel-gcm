@@ -16,8 +16,6 @@
         .page-fade-in { animation: fadeIn 0.4s ease-in-out; }
         @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
         .nav-link.active { background-color: var(--accent-color) !important; color: var(--accent-text) !important; font-weight: 600; }
-        .modal-backdrop { background-color: rgba(2, 6, 23, 0.7); backdrop-filter: blur(4px); }
-        input, select { color: var(--text-primary); }
     </style>
 </head>
 <body class="min-h-screen antialiased">
@@ -29,10 +27,7 @@
         class GcmPanelApp {
             constructor(rootNode) {
                 this.root = rootNode;
-                this.modalRoot = document.getElementById('modal-root');
-                this.toastRoot = document.getElementById('toast-root');
                 this.state = { user: { name: 'Admin', email: 'Acesso Direto' }, theme: 'dark', timers: {}, charts: {} };
-
                 this.defineApi();
                 this.defineTemplates();
                 this.init();
@@ -60,19 +55,15 @@
                 this.clearTimers();
                 const contentContainer = this.root.querySelector('#page-content');
                 if (!contentContainer) return;
-
                 window.location.hash = page;
                 this.root.querySelector('#page-title').textContent = page.charAt(0).toUpperCase() + page.slice(1);
                 this.root.querySelectorAll('#main-nav a').forEach(a => a.classList.toggle('active', a.hash === `#${page}`));
-
                 const pageRenderers = {
                     dashboard: this.renderDashboardPage,
                     reports: this.renderReportsPage,
                     spreadsheet: this.renderSpreadsheetPage,
-                    settings: this.renderSettingsPage,
                 };
-                const renderer = pageRenderers[page] || this.renderNotFoundPage;
-
+                const renderer = pageRenderers[page] || this.renderDashboardPage;
                 await renderer.call(this, contentContainer);
             }
 
@@ -81,94 +72,23 @@
                 const summary = await this.api.getDashboardSummary();
                 if (summary && summary.success) {
                     container.innerHTML = this.templates.dashboardPage(summary);
-                    this.renderChart('activity', summary.weeklyActivity, '#activity-chart');
-                    this.renderChart('hourly', summary.hourlyActivity, '#hourly-activity-chart');
-                    this.renderActivityFeed(summary.activityFeed);
                 } else {
                     container.innerHTML = this.templates.errorPage('Falha ao carregar dados do dashboard.');
                 }
             }
 
-            renderActivityFeed(feedItems) {
-                const feedContainer = this.root.querySelector('#activity-feed');
-                if (!feedContainer || !feedItems) return;
-                feedContainer.innerHTML = feedItems.length > 0
-                    ? feedItems.map(item => this.templates.activityFeedItem(item)).join('')
-                    : '<p class="text-sm text-text-secondary text-center py-4">Nenhuma atividade recente.</p>';
-            }
-
             async renderReportsPage(container) {
-                const usersResponse = await this.api.getUniqueUsers();
-                const users = usersResponse.success ? usersResponse.users : [];
-                container.innerHTML = this.templates.reportsPage(users);
-                this.root.querySelector('#filter-btn').addEventListener('click', () => this.renderReportTable());
-                this.root.querySelector('#export-xlsx-btn').addEventListener('click', () => this.exportReport('xlsx'));
-                this.root.querySelector('#export-pdf-btn').addEventListener('click', () => this.exportReport('pdf'));
-                await this.renderReportTable();
-            }
-
-            exportReport(format) {
-                const filters = {
-                    userId: this.root.querySelector('#user-filter-select').value,
-                    status: this.root.querySelector('#status-filter-select').value,
-                    startDate: this.root.querySelector('#start-date-filter').value,
-                    endDate: this.root.querySelector('#end-date-filter').value,
-                };
-                const params = new URLSearchParams(Object.fromEntries(Object.entries(filters).filter(([_, v]) => v != null && v !== '')));
-                params.append('format', format);
-                window.open(`/api/registros/export?${params.toString()}`, '_blank');
-            }
-
-            async renderReportTable(isSpreadsheet = false) {
-                const tableId = isSpreadsheet ? '#spreadsheet-table-body' : '#reports-table-body';
-                const tableBody = this.root.querySelector(tableId);
-                if (!tableBody) return;
-                tableBody.innerHTML = this.templates.loadingRow(6);
-                const filters = isSpreadsheet ? {} : {
-                    userId: this.root.querySelector('#user-filter-select').value,
-                    status: this.root.querySelector('#status-filter-select').value,
-                    startDate: this.root.querySelector('#start-date-filter').value,
-                    endDate: this.root.querySelector('#end-date-filter').value,
-                };
-                const data = await this.api.getRegistros(filters);
-                if (data && data.registros) {
-                    let allPontos = data.registros.flatMap(reg => reg.pontos.map(p => ({...p, username: reg.username, userId: reg.userId })));
-                    allPontos.sort((a,b) => new Date(b.entrada) - new Date(a.entrada));
-                    if (!isSpreadsheet) {
-                         // Apenas a ordenação por data é mantida
-                    } else {
-                        allPontos = allPontos.slice(0, 50);
-                    }
-                    tableBody.innerHTML = allPontos.length > 0 ? allPontos.map(p => this.templates.reportRow(p)).join('') : this.templates.emptyRow(6);
-                    this.setupActionListeners(tableBody);
-                } else {
-                    tableBody.innerHTML = this.templates.emptyRow(6);
-                }
+                container.innerHTML = this.templates.reportsPage([]);
             }
 
             async renderSpreadsheetPage(container) {
                 container.innerHTML = this.templates.spreadsheetPage();
-                const renderTable = () => this.renderReportTable(true);
-                this.state.timers.spreadsheet = setInterval(renderTable, 30000);
-                await renderTable();
-            }
-
-            renderSettingsPage(container) {
-                container.innerHTML = this.templates.settingsPage();
-            }
-
-            renderNotFoundPage(container) {
-                container.innerHTML = this.templates.notFoundPage();
             }
 
             setupCommonListeners() {
                 this.root.querySelector('#theme-toggle')?.addEventListener('click', () => this.toggleTheme());
                 window.onhashchange = () => this.navigateTo(window.location.hash.substring(1) || 'dashboard');
                 this.updateThemeUI();
-            }
-
-            setupActionListeners(container) {
-                // ... (Suas funções de action listeners aqui)
             }
 
             toggleTheme() {
@@ -189,42 +109,33 @@
                 this.state.timers = {};
             }
 
-            renderChart(type, data, selector) {
-                // ... (Sua função de renderChart aqui)
-            }
-            
-            showToast(message, type = 'info') {
-                // ... (Sua função showToast aqui)
-            }
-
             defineApi() {
                 this.api = {
-                    fetch: async (endpoint, options = {}) => { try { const res = await fetch(`/api${endpoint}`, options); return res.json(); } catch (err) { return { success: false, message: 'Erro de rede.' }; } },
+                    fetch: async (endpoint, options = {}) => {
+                        const res = await fetch(`/api${endpoint}`, options);
+                        if (!res.ok) {
+                            const error = new Error(`HTTP error! status: ${res.status}`);
+                            error.response = res;
+                            throw error;
+                        }
+                        return res.json();
+                    },
                     getDashboardSummary: () => this.api.fetch('/dashboard/summary'),
-                    getRegistros: (filters = {}) => { const params = new URLSearchParams(Object.fromEntries(Object.entries(filters).filter(([_, v]) => v != null && v !== ''))); return this.api.fetch(`/registros?${params}`); },
-                    getUniqueUsers: () => this.api.fetch('/unique-users'),
                 };
             }
 
             defineTemplates() {
                 this.templates = {
-                    appShell: (user) => `<div class="flex h-screen"><aside class="sidebar w-64 flex-shrink-0 flex flex-col border-r transition-all" style="background-color: var(--sidebar-bg); border-color: var(--border-color);"><div class="h-16 flex items-center justify-center px-4 border-b border-inherit"><h1 class="text-xl font-bold text-blue-500 flex items-center gap-2"><i class="fas fa-shield-alt"></i><span>PAINEL GCM</span></h1></div><nav class="flex-1 px-4 py-6 space-y-1.5" id="main-nav"><a href="#dashboard" class="nav-link flex items-center px-4 py-2.5 rounded-lg text-sm font-semibold transition-colors"><i class="fas fa-home w-6 mr-3 text-center"></i>Dashboard</a><a href="#reports" class="nav-link flex items-center px-4 py-2.5 rounded-lg text-sm font-semibold transition-colors"><i class="fas fa-file-invoice w-6 mr-3 text-center"></i>Relatórios</a><a href="#spreadsheet" class="nav-link flex items-center px-4 py-2.5 rounded-lg text-sm font-semibold transition-colors"><i class="fas fa-table w-6 mr-3 text-center"></i>Planilha</a></nav><div class="p-4 border-t border-inherit"><a href="#settings" class="nav-link flex items-center px-4 py-2.5 rounded-lg text-sm font-semibold transition-colors mb-2"><i class="fas fa-cog w-6 mr-3 text-center"></i>Configurações</a></div></aside><main class="flex-1 flex flex-col overflow-hidden"><header class="h-16 flex items-center justify-between px-6 border-b border-inherit flex-shrink-0 bg-[var(--card-bg)]/80 backdrop-blur-sm"><h2 id="page-title" class="text-2xl font-bold"></h2><div class="flex items-center space-x-4"><button id="theme-toggle" class="text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-full w-10 h-10 flex items-center justify-center transition-colors"></button><div class="text-right"><div class="font-semibold text-sm">${user.name}</div><div class="text-xs text-text-secondary">${user.email}</div></div></div></header><div id="page-content" class="flex-1 overflow-y-auto p-6 page-fade-in"></div></main></div>`,
-                    loadingDashboard: () => `<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">${this.templates.summaryCard("Carregando...", "...", "fa-spinner fa-spin")}</div>`,
-                    dashboardPage: (s) => `<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">${this.templates.summaryCard("Total de Agentes", s.totalAgents, "fa-users")}${this.templates.summaryCard("Pontos Pendentes", s.pendingRegisters, "fa-clock", "text-amber-500")}${this.templates.summaryCard("Fechados Hoje", s.closedToday, "fa-check-circle", "text-green-500")}${this.templates.summaryCard("Horas do Dia", `${s.hoursToday}h`, "fa-stopwatch", "text-blue-500")}</div><div class="mt-8 grid grid-cols-1 lg:grid-cols-3 gap-6"><div class="lg:col-span-2 card rounded-xl shadow-lg p-6" style="background-color: var(--card-bg);"><h3 class="font-semibold mb-4 text-lg">Atividade da Semana</h3><div class="h-80"><canvas id="activity-chart"></canvas></div></div><div class="card rounded-xl shadow-lg p-6" style="background-color: var(--card-bg);"><h3 class="font-semibold mb-4 text-lg">Atividade Recente</h3><ul id="activity-feed" class="space-y-4"></ul></div></div><div class="mt-6 card rounded-xl shadow-lg p-6" style="background-color: var(--card-bg);"><h3 class="font-semibold mb-4 text-lg">Registros por Hora (Hoje)</h3><div class="h-80"><canvas id="hourly-activity-chart"></canvas></div></div>`,
-                    activityFeedItem: (item) => `<li class="flex items-center text-sm"><i class="fas ${item.ponto.saida ? 'fa-sign-out-alt text-red-500' : 'fa-sign-in-alt text-green-500'} w-4 mr-3 flex-shrink-0"></i><div class="flex-grow"><span class="font-semibold">${item.username}</span> ${item.ponto.saida ? 'encerrou o ponto' : 'iniciou um ponto'}.</div><span class="ml-auto text-xs text-text-secondary flex-shrink-0">${new Date(item.ponto.saida || item.ponto.entrada).toLocaleTimeString('pt-BR', {hour: '2-digit', minute: '2-digit'})}</span></li>`,
+                    appShell: (user) => `<div class="flex h-screen"><aside class="sidebar w-64 flex-shrink-0 flex flex-col border-r" style="background-color: var(--sidebar-bg); border-color: var(--border-color);"><div class="h-16 flex items-center justify-center px-4 border-b border-inherit"><h1 class="text-xl font-bold text-blue-500 flex items-center gap-2"><i class="fas fa-shield-alt"></i><span>PAINEL GCM</span></h1></div><nav class="flex-1 px-4 py-6 space-y-1.5" id="main-nav"><a href="#dashboard" class="nav-link flex items-center px-4 py-2.5 rounded-lg text-sm font-semibold"><i class="fas fa-home w-6 mr-3 text-center"></i>Dashboard</a><a href="#reports" class="nav-link flex items-center px-4 py-2.5 rounded-lg text-sm font-semibold"><i class="fas fa-file-invoice w-6 mr-3 text-center"></i>Relatórios</a><a href="#spreadsheet" class="nav-link flex items-center px-4 py-2.5 rounded-lg text-sm font-semibold"><i class="fas fa-table w-6 mr-3 text-center"></i>Planilha</a></nav></aside><main class="flex-1 flex flex-col overflow-hidden"><header class="h-16 flex items-center justify-between px-6 border-b border-inherit"><h2 id="page-title" class="text-2xl font-bold"></h2><div class="flex items-center space-x-4"><button id="theme-toggle" class="text-slate-500 rounded-full w-10 h-10 flex items-center justify-center"></button><div class="text-right"><div class="font-semibold text-sm">${user.name}</div><div class="text-xs text-text-secondary">${user.email}</div></div></div></header><div id="page-content" class="flex-1 overflow-y-auto p-6 page-fade-in"></div></main></div>`,
+                    loadingDashboard: () => `<div class="text-center p-16 text-text-secondary"><i class="fas fa-spinner fa-spin fa-2x"></i></div>`,
+                    dashboardPage: (s) => `<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">${this.templates.summaryCard("Total de Agentes", s.totalAgents, "fa-users")}</div>`,
                     summaryCard: (t, v, i, c = '') => `<div class="card rounded-xl p-5 shadow-lg border-0" style="background-color: var(--card-bg);"><div class="flex items-center"><div class="p-3 rounded-full bg-blue-500/10 text-blue-500 mr-4"><i class="fas ${i}"></i></div><div><h4 class="text-sm font-medium text-text-secondary">${t}</h4><p class="text-2xl font-bold mt-1 ${c}">${v}</p></div></div></div>`,
-                    reportsPage: (users) => `<div class="card rounded-xl shadow-lg border-0" style="background-color: var(--card-bg);"><div class="p-6 border-b border-inherit flex justify-between items-center flex-wrap gap-4"><h3 class="text-xl font-bold">Relatório de Pontos</h3><div class="flex gap-2"><button id="export-xlsx-btn" class="bg-green-600 text-white font-semibold rounded-lg h-9 px-4 text-sm flex items-center gap-2 hover:bg-green-700 transition-colors"><i class="fas fa-file-excel"></i>Excel</button><button id="export-pdf-btn" class="bg-red-600 text-white font-semibold rounded-lg h-9 px-4 text-sm flex items-center gap-2 hover:bg-red-700 transition-colors"><i class="fas fa-file-pdf"></i>PDF</button></div></div><div class="p-4 grid grid-cols-1 md:grid-cols-5 gap-4 items-end"><select id="user-filter-select" class="md:col-span-1 px-3 py-2 bg-slate-100 dark:bg-slate-800 border-transparent rounded-lg"><option value="">Todos Agentes</option>${users.map(u => `<option value="${u.userId}">${u.username}</option>`).join('')}</select><select id="status-filter-select" class="md:col-span-1 px-3 py-2 bg-slate-100 dark:bg-slate-800 border-transparent rounded-lg"><option value="">Todos Status</option><option value="completed">Completo</option><option value="pending">Pendente</option></select><input type="date" id="start-date-filter" class="md:col-span-1 px-3 py-2 bg-slate-100 dark:bg-slate-800 border-transparent rounded-lg"><input type="date" id="end-date-filter" class="md:col-span-1 px-3 py-2 bg-slate-100 dark:bg-slate-800 border-transparent rounded-lg"><button id="filter-btn" class="md:col-span-1 bg-blue-600 text-white font-semibold rounded-lg h-10 px-4 hover:bg-blue-700 transition-colors">Filtrar</button></div><div class="overflow-x-auto"><table class="min-w-full text-sm"><thead class="text-xs text-text-secondary uppercase bg-slate-50 dark:bg-slate-800/50"><tr><th class="px-6 py-3 text-left font-semibold">Usuário</th><th class="px-6 py-3 text-left font-semibold">Entrada</th><th class="px-6 py-3 text-left font-semibold">Saída</th><th class="px-6 py-3 text-left font-semibold">Duração</th><th class="px-6 py-3 text-center font-semibold">Status</th><th class="px-6 py-3 text-center font-semibold">Ações</th></tr></thead><tbody id="reports-table-body" class="divide-y divide-inherit"></tbody></table></div></div>`,
-                    spreadsheetPage: () => `<div class="card rounded-xl shadow-lg border-0" style="background-color: var(--card-bg);"><div class="p-6 border-b border-inherit flex justify-between items-center"><div><h3 class="text-xl font-bold">Planilha ao Vivo</h3><p class="text-sm text-text-secondary">Atualiza a cada 30 segundos.</p></div><i class="fas fa-wifi text-green-500"></i></div><div class="overflow-x-auto"><table class="min-w-full text-sm"><thead class="text-xs text-text-secondary uppercase bg-slate-50 dark:bg-slate-800/50"><tr><th class="px-6 py-3 text-left font-semibold">Usuário</th><th class="px-6 py-3 text-left font-semibold">Entrada</th><th class="px-6 py-3 text-left font-semibold">Saída</th><th class="px-6 py-3 text-left font-semibold">Duração</th><th class="px-6 py-3 text-center font-semibold">Status</th><th class="px-6 py-3 text-center font-semibold">Ações</th></tr></thead><tbody id="spreadsheet-table-body" class="divide-y divide-inherit"></tbody></table></div></div>`,
-                    settingsPage: () => `<div class="card rounded-xl p-6 shadow-lg border-0 max-w-2xl mx-auto" style="background-color: var(--card-bg);"><h3 class="text-xl font-bold mb-1">Configurações</h3><p class="text-sm text-text-secondary mb-6">Ajustes gerais do sistema.</p><div class="text-center p-8 border-2 border-dashed border-border-color rounded-lg text-text-secondary">Página de Configurações em construção.</div></div>`,
+                    reportsPage: (users) => `<div class="card rounded-xl p-6 shadow-lg border-0"><h3 class="text-xl font-bold">Relatórios</h3></div>`,
+                    spreadsheetPage: () => `<div class="card rounded-xl p-6 shadow-lg border-0"><h3 class="text-xl font-bold">Planilha</h3></div>`,
                     errorPage: (message) => `<div class="text-center p-16"><i class="fas fa-exclamation-triangle text-4xl text-red-500 mb-4"></i><h1 class="text-2xl font-bold">Ocorreu um Erro</h1><p class="text-text-secondary">${message}</p></div>`,
-                    loadingRow: c => `<tr><td colspan="${c}" class="text-center p-8 text-text-secondary"><i class="fas fa-spinner fa-spin mr-2"></i>Carregando...</td></tr>`,
-                    emptyRow: c => `<tr><td colspan="${c}" class="text-center p-8 text-text-secondary"><i class="fas fa-inbox mr-2"></i>Nenhum registro encontrado.</td></tr>`,
-                    reportRow: p => { const iC = p.entrada && p.saida, d = iC ? ((new Date(p.saida) - new Date(p.entrada)) / 36e5) : 0; return `<tr class="hover:bg-slate-50 dark:hover:bg-slate-800/60"><td class="p-4 px-6 font-medium">${p.username}</td><td class="p-4 px-6 text-text-secondary">${new Date(p.entrada).toLocaleString('pt-BR')}</td><td class="p-4 px-6 text-text-secondary">${p.saida ? new Date(p.saida).toLocaleString('pt-BR') : '<span class="italic text-slate-500">Em serviço...</span>'}</td><td class="p-4 px-6 font-semibold">${iC ? d.toFixed(2) + 'h' : '---'}</td><td class="p-4 px-6 text-center"><span class="px-2.5 py-0.5 text-xs font-semibold rounded-full ${iC ? 'bg-green-100 text-green-800 dark:bg-green-500/20 dark:text-green-300' : 'bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-300'}">${iC ? 'Completo' : 'Pendente'}</span></td><td class="p-4 px-6 text-center"><div class="flex justify-center gap-2">${!iC ? `<button data-id="${p._id}" class="force-logout-btn text-text-secondary hover:text-amber-500 w-8 h-8 rounded-lg hover:bg-slate-500/10" title="Forçar Saída"><i class="fas fa-clock"></i></button>` : `<button data-ponto='${JSON.stringify(p)}' class="edit-btn text-text-secondary hover:text-blue-500 w-8 h-8 rounded-lg hover:bg-slate-500/10" title="Editar"><i class="fas fa-pencil-alt"></i></button>`}<button data-id="${p._id}" class="delete-btn text-text-secondary hover:text-red-500 w-8 h-8 rounded-lg hover:bg-slate-500/10" title="Excluir"><i class="fas fa-trash-alt"></i></button></div></td></tr>` },
-                    notFoundPage: () => `<div class="text-center p-16"><h1 class="text-4xl font-bold">404</h1><p class="text-text-secondary">Página não encontrada.</p></div>`,
                 };
             }
         }
-
         new GcmPanelApp(document.getElementById('app-root'));
     </script>
 </body>
