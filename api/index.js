@@ -1,21 +1,20 @@
 require('dotenv').config();
 
-// Validação de variáveis de ambiente essenciais
+// Validação de variáveis de ambiente
 if (!process.env.MONGO_URI || !process.env.SESSION_SECRET) {
     console.error("\nERRO CRÍTICO: Variáveis de ambiente MONGO_URI ou SESSION_SECRET não foram encontradas.");
 }
 
 // Importações de Pacotes
-require('dotenv').config();
-
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const session = require('express-session');
 const helmet = require('helmet');
-const MongoStore = require('connect-mongo');
+const rateLimit = require('express-rate-limit');
 const ExcelJS = require('exceljs');
 const PDFDocument = require('pdfkit');
+const MongoStore = require('connect-mongo');
 
 // Modelos do Banco de Dados
 const Registro = require('../models/Registro.js');
@@ -47,7 +46,7 @@ app.use(session({
   saveUninitialized: false,
   store: MongoStore.create({
       clientPromise: clientPromise,
-      dbName: 'Bateponto' // Verifique se este é o nome do seu banco de dados na MONGO_URI
+      dbName: 'Bateponto' // Garanta que este é o nome do seu banco de dados
   }),
   cookie: {
       secure: process.env.NODE_ENV === 'production',
@@ -65,15 +64,15 @@ const isAdmin = (req, res, next) => {
 };
 
 
-// --- TODAS AS ROTAS DA APLICAÇÃO ---
+// --- ROTAS COMPLETAS DA APLICAÇÃO ---
 
-app.post('/api/login', async (req, res) => {
+app.post('/api/login', (req, res) => {
     if (req.body.email === 'admin' && req.body.password === 'mayron2025') {
         req.session.userId = 'admin_user';
         req.session.isAdmin = true;
-        // Salva a sessão manualmente para garantir que seja escrita antes de responder
         req.session.save(err => {
             if (err) {
+                console.error("Erro ao salvar sessão:", err);
                 return res.status(500).json({ success: false, message: 'Erro ao salvar sessão.' });
             }
             return res.json({ success: true, user: { name: 'Admin GCM', email: 'admin@painel.com', isAdmin: true } });
@@ -203,7 +202,23 @@ app.get('/api/registros/export', isAdmin, async (req, res) => {
         res.setHeader('Content-Disposition', 'attachment; filename="relatorio.xlsx"');
         return workbook.xlsx.write(res).then(() => res.status(200).end());
     } else if (format === 'pdf') {
-        // ... (seu código para gerar PDF aqui)
+        const doc = new PDFDocument({ margin: 30, size: 'A4' });
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', 'attachment; filename="relatorio.pdf"');
+        doc.pipe(res);
+        doc.fontSize(18).text('Relatório de Pontos', { align: 'center' });
+        doc.moveDown(2);
+        filteredPontos.forEach(p => {
+            const duracao = p.saida ? ((new Date(p.saida) - new Date(p.entrada)) / 36e5).toFixed(2) + 'h' : 'Em serviço';
+            doc.fontSize(10).text(
+                `Usuário: ${p.username}\n` + `Entrada: ${new Date(p.entrada).toLocaleString('pt-BR')}\n` +
+                `Saída: ${p.saida ? new Date(p.saida).toLocaleString('pt-BR') : 'N/A'}\n` + `Duração: ${duracao}\n`,
+                { lineGap: 4 }
+            );
+            doc.lineCap('round').moveTo(doc.x, doc.y).lineTo(565, doc.y).strokeColor("#dddddd").stroke();
+            doc.moveDown();
+        });
+        doc.end();
     } else {
         res.status(400).send('Formato inválido.');
     }
@@ -242,18 +257,14 @@ app.delete('/api/registros/:pontoId', isAdmin, async (req, res) => {
     res.json({ success: true, message: "Registro excluído com sucesso!" });
 });
 
-
 // --- Handler Final para a Vercel ---
-// Esta função será o ponto de entrada para TODAS as requisições /api/*
 const handler = async (req, res) => {
   try {
-    // Garante que a conexão com o banco de dados está ativa antes de prosseguir
+    // Garante que a conexão com o banco de dados está ativa antes de chamar o app
     await connectMongo();
-    // Passa a requisição para o app Express, que conhece todas as rotas
     return app(req, res);
   } catch (error) {
-    // Se a conexão inicial com o DB falhar, retorna um erro genérico
-    res.status(500).json({ success: false, message: 'Erro crítico no servidor.', error: error.message });
+    res.status(500).json({ success: false, message: 'Erro crítico na inicialização da API.', error: error.message });
   }
 };
 
