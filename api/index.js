@@ -8,40 +8,35 @@ const helmet = require('helmet');
 const app = express();
 const Registro = require('../models/Registro.js');
 
-// --- Gerenciador de Conexão ---
+// Gerenciador de Conexão
 let cachedDb = null;
 async function connectMongo() {
-  if (cachedDb && mongoose.connection.readyState === 1) return;
+  if (cachedDb) return;
   try {
     cachedDb = await mongoose.connect(process.env.MONGO_URI);
-    console.log("MongoDB conectado.");
+    console.log("MongoDB conectado para esta instância.");
   } catch (err) {
     console.error("Erro ao conectar ao MongoDB:", err);
     throw err;
   }
 }
 
-// --- Middlewares ---
-app.use(cors({ origin: process.env.CORS_ORIGIN }));
+// Middlewares
+app.use(cors({ origin: process.env.CORS_ORIGIN, credentials: true }));
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(express.json());
 
-// --- Wrapper de Rota ---
-const withDB = handler => async (req, res) => {
+// Rota Única para o Dashboard
+app.get('/api/dashboard/summary', async (req, res) => {
     try {
         await connectMongo();
-        return await handler(req, res);
+        const totalAgentsResult = await Registro.distinct('userId');
+        // Você pode adicionar mais dados aqui se precisar
+        res.status(200).json({ success: true, totalAgents: totalAgentsResult.length });
     } catch (error) {
-        return res.status(500).json({ success: false, message: 'Erro de conexão com o banco de dados.', error: error.message });
+        res.status(500).json({ success: false, message: 'Erro ao carregar dados do dashboard' });
     }
-};
-
-// --- Rota Principal (Dashboard) ---
-app.get('/api/dashboard/summary', withDB(async (req, res) => {
-    const totalAgentsResult = await Registro.distinct('userId');
-    // Adicione outras lógicas se necessário
-    res.json({ success: true, totalAgents: totalAgentsResult.length });
-}));
+});
 
 // Exporta o app para a Vercel
 module.exports = app;

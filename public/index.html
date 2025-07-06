@@ -6,7 +6,6 @@
     <title>Painel GCM</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
-    <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Readex+Pro:wght@400;500;600;700&display=swap" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
@@ -20,9 +19,6 @@
 </head>
 <body class="min-h-screen antialiased">
     <div id="app-root"></div>
-    <div id="modal-root"></div>
-    <div id="toast-root" class="fixed top-5 right-5 z-[100] space-y-2"></div>
-
     <script>
         class GcmPanelApp {
             constructor(rootNode) {
@@ -36,23 +32,16 @@
             async init() {
                 this.state.theme = localStorage.getItem('theme') || 'dark';
                 this.updateThemeClass();
-                try {
-                    await this.renderAppShell();
-                } catch (error) {
-                    console.error("Erro na inicialização:", error);
-                    this.root.innerHTML = `<div class="p-4 text-red-500">Falha ao iniciar a aplicação.</div>`;
-                }
+                await this.renderAppShell();
             }
 
             async renderAppShell() {
-                this.clearTimers();
                 this.root.innerHTML = this.templates.appShell(this.state.user);
                 this.setupCommonListeners();
                 await this.navigateTo(window.location.hash.substring(1) || 'dashboard');
             }
 
             async navigateTo(page) {
-                this.clearTimers();
                 const contentContainer = this.root.querySelector('#page-content');
                 if (!contentContainer) return;
                 window.location.hash = page;
@@ -60,8 +49,7 @@
                 this.root.querySelectorAll('#main-nav a').forEach(a => a.classList.toggle('active', a.hash === `#${page}`));
                 const pageRenderers = {
                     dashboard: this.renderDashboardPage,
-                    reports: this.renderReportsPage,
-                    spreadsheet: this.renderSpreadsheetPage,
+                    reports: () => { contentContainer.innerHTML = '<h2>Relatórios</h2><p>Página em construção.</p>'; },
                 };
                 const renderer = pageRenderers[page] || this.renderDashboardPage;
                 await renderer.call(this, contentContainer);
@@ -69,20 +57,16 @@
 
             async renderDashboardPage(container) {
                 container.innerHTML = this.templates.loadingDashboard();
-                const summary = await this.api.getDashboardSummary();
-                if (summary && summary.success) {
-                    container.innerHTML = this.templates.dashboardPage(summary);
-                } else {
-                    container.innerHTML = this.templates.errorPage('Falha ao carregar dados do dashboard.');
+                try {
+                    const summary = await this.api.getDashboardSummary();
+                    if (summary && summary.success) {
+                        container.innerHTML = this.templates.dashboardPage(summary);
+                    } else {
+                        container.innerHTML = this.templates.errorPage(summary.message || 'Falha ao carregar dados.');
+                    }
+                } catch (error) {
+                    container.innerHTML = this.templates.errorPage(error.message);
                 }
-            }
-
-            async renderReportsPage(container) {
-                container.innerHTML = this.templates.reportsPage([]);
-            }
-
-            async renderSpreadsheetPage(container) {
-                container.innerHTML = this.templates.spreadsheetPage();
             }
 
             setupCommonListeners() {
@@ -104,18 +88,12 @@
                 if(themeIcon) themeIcon.innerHTML = `<i class="fas fa-${this.state.theme === 'light' ? 'moon' : 'sun'} text-xl"></i>`;
             }
 
-            clearTimers() {
-                Object.values(this.state.timers).forEach(timer => clearInterval(timer));
-                this.state.timers = {};
-            }
-
             defineApi() {
                 this.api = {
                     fetch: async (endpoint, options = {}) => {
                         const res = await fetch(`/api${endpoint}`, options);
                         if (!res.ok) {
-                            const error = new Error(`HTTP error! status: ${res.status}`);
-                            error.response = res;
+                            const error = new Error(`Erro na API: ${res.statusText}`);
                             throw error;
                         }
                         return res.json();
@@ -126,12 +104,10 @@
 
             defineTemplates() {
                 this.templates = {
-                    appShell: (user) => `<div class="flex h-screen"><aside class="sidebar w-64 flex-shrink-0 flex flex-col border-r" style="background-color: var(--sidebar-bg); border-color: var(--border-color);"><div class="h-16 flex items-center justify-center px-4 border-b border-inherit"><h1 class="text-xl font-bold text-blue-500 flex items-center gap-2"><i class="fas fa-shield-alt"></i><span>PAINEL GCM</span></h1></div><nav class="flex-1 px-4 py-6 space-y-1.5" id="main-nav"><a href="#dashboard" class="nav-link flex items-center px-4 py-2.5 rounded-lg text-sm font-semibold"><i class="fas fa-home w-6 mr-3 text-center"></i>Dashboard</a><a href="#reports" class="nav-link flex items-center px-4 py-2.5 rounded-lg text-sm font-semibold"><i class="fas fa-file-invoice w-6 mr-3 text-center"></i>Relatórios</a><a href="#spreadsheet" class="nav-link flex items-center px-4 py-2.5 rounded-lg text-sm font-semibold"><i class="fas fa-table w-6 mr-3 text-center"></i>Planilha</a></nav></aside><main class="flex-1 flex flex-col overflow-hidden"><header class="h-16 flex items-center justify-between px-6 border-b border-inherit"><h2 id="page-title" class="text-2xl font-bold"></h2><div class="flex items-center space-x-4"><button id="theme-toggle" class="text-slate-500 rounded-full w-10 h-10 flex items-center justify-center"></button><div class="text-right"><div class="font-semibold text-sm">${user.name}</div><div class="text-xs text-text-secondary">${user.email}</div></div></div></header><div id="page-content" class="flex-1 overflow-y-auto p-6 page-fade-in"></div></main></div>`,
+                    appShell: (user) => `<div class="flex h-screen"><aside class="sidebar w-64 flex-shrink-0 flex flex-col border-r" style="background-color: var(--sidebar-bg); border-color: var(--border-color);"><div class="h-16 flex items-center justify-center px-4 border-b border-inherit"><h1 class="text-xl font-bold text-blue-500 flex items-center gap-2"><i class="fas fa-shield-alt"></i><span>PAINEL GCM</span></h1></div><nav class="flex-1 px-4 py-6 space-y-1.5" id="main-nav"><a href="#dashboard" class="nav-link flex items-center px-4 py-2.5 rounded-lg text-sm font-semibold"><i class="fas fa-home w-6 mr-3 text-center"></i>Dashboard</a><a href="#reports" class="nav-link flex items-center px-4 py-2.5 rounded-lg text-sm font-semibold"><i class="fas fa-file-invoice w-6 mr-3 text-center"></i>Relatórios</a></nav></aside><main class="flex-1 flex flex-col overflow-hidden"><header class="h-16 flex items-center justify-between px-6 border-b border-inherit"><h2 id="page-title" class="text-2xl font-bold"></h2><div class="flex items-center space-x-4"><button id="theme-toggle" class="text-slate-500 rounded-full w-10 h-10 flex items-center justify-center"></button><div class="text-right"><div class="font-semibold text-sm">${user.name}</div><div class="text-xs text-text-secondary">${user.email}</div></div></div></header><div id="page-content" class="flex-1 overflow-y-auto p-6 page-fade-in"></div></main></div>`,
                     loadingDashboard: () => `<div class="text-center p-16 text-text-secondary"><i class="fas fa-spinner fa-spin fa-2x"></i></div>`,
                     dashboardPage: (s) => `<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">${this.templates.summaryCard("Total de Agentes", s.totalAgents, "fa-users")}</div>`,
                     summaryCard: (t, v, i, c = '') => `<div class="card rounded-xl p-5 shadow-lg border-0" style="background-color: var(--card-bg);"><div class="flex items-center"><div class="p-3 rounded-full bg-blue-500/10 text-blue-500 mr-4"><i class="fas ${i}"></i></div><div><h4 class="text-sm font-medium text-text-secondary">${t}</h4><p class="text-2xl font-bold mt-1 ${c}">${v}</p></div></div></div>`,
-                    reportsPage: (users) => `<div class="card rounded-xl p-6 shadow-lg border-0"><h3 class="text-xl font-bold">Relatórios</h3></div>`,
-                    spreadsheetPage: () => `<div class="card rounded-xl p-6 shadow-lg border-0"><h3 class="text-xl font-bold">Planilha</h3></div>`,
                     errorPage: (message) => `<div class="text-center p-16"><i class="fas fa-exclamation-triangle text-4xl text-red-500 mb-4"></i><h1 class="text-2xl font-bold">Ocorreu um Erro</h1><p class="text-text-secondary">${message}</p></div>`,
                 };
             }
