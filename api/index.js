@@ -36,6 +36,19 @@ app.use(helmet({ contentSecurityPolicy: false }));
 app.use(express.json());
 app.use(rateLimit({ windowMs: 15 * 60 * 1000, max: 1000 }));
 
+
+// <-- ROTA ADICIONADA -->
+app.get('/api/members', async (req, res) => {
+    try {
+        // Busca todos os membros e os ordena por nome de usuário
+        const members = await Member.find().sort({ username: 1 }).lean();
+        res.json({ success: true, members });
+    } catch (error) {
+        console.error("Erro ao buscar membros:", error);
+        res.status(500).json({ success: false, message: 'Erro ao buscar membros.' });
+    }
+});
+
 // Rotas públicas
 app.get('/api/registros', async (req, res) => {
     const { userId, status, startDate, endDate } = req.query;
