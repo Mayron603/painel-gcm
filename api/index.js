@@ -16,6 +16,7 @@ const PDFDocument = require('pdfkit');
 
 // Modelos do Banco de Dados
 const Registro = require('../models/Registro.js');
+const Member = require('../models/Member.js');
 
 // Conexão com MongoDB
 const clientPromise = mongoose.connect(process.env.MONGO_URI)
