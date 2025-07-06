@@ -1,19 +1,27 @@
 require('dotenv').config();
 
+// Validação de variáveis de ambiente essenciais
+if (!process.env.MONGO_URI || !process.env.SESSION_SECRET) {
+    console.error("\nERRO CRÍTICO: Variáveis de ambiente MONGO_URI ou SESSION_SECRET não foram encontradas.");
+}
+
 // Importações de Pacotes
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const session = require('express-session');
 const helmet = require('helmet');
-const MongoStore = require('connect-mongo');
+const rateLimit = require('express-rate-limit');
 const ExcelJS = require('exceljs');
 const PDFDocument = require('pdfkit');
+const MongoStore = require('connect-mongo');
+
+const app = express();
 
 // Modelos do Banco de Dados
 const Registro = require('../models/Registro.js');
 
-// --- GERENCIADOR DE CONEXÃO ROBUSTO PARA VERCEL ---
+// --- Gerenciador de Conexão com o MongoDB ---
 let cachedDb = null;
 async function connectMongo() {
   if (cachedDb && mongoose.connection.readyState === 1) {
@@ -30,9 +38,7 @@ async function connectMongo() {
   }
 }
 
-// --- Criação e Configuração do App Express ---
-const app = express();
-
+// --- Configurações e Middlewares ---
 app.use(cors({ origin: process.env.CORS_ORIGIN, credentials: true }));
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(express.json());
@@ -61,7 +67,7 @@ const isAdmin = (req, res, next) => {
 const withDB = handler => async (req, res) => {
     try {
         await connectMongo();
-        await handler(req, res);
+        return await handler(req, res);
     } catch (error) {
         console.error("ERRO CAPTURADO PELO WRAPPER:", error);
         res.status(500).json({ success: false, message: 'Erro interno no servidor.', error: error.message });
@@ -197,8 +203,7 @@ app.get('/api/registros/export', isAdmin, withDB(async (req, res) => {
         });
         res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
         res.setHeader('Content-Disposition', 'attachment; filename="relatorio.xlsx"');
-        await workbook.xlsx.write(res);
-        res.end();
+        return workbook.xlsx.write(res).then(() => res.status(200).end());
     } else if (format === 'pdf') {
         const doc = new PDFDocument({ margin: 30, size: 'A4' });
         res.setHeader('Content-Type', 'application/pdf');
