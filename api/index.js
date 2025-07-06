@@ -18,6 +18,14 @@ const PDFDocument = require('pdfkit');
 const Registro = require('../models/Registro.js');
 const Member = require('../models/Member.js');
 
+// --- LISTA DE MEMBROS PARA IGNORAR NA API ---
+const IGNORED_MEMBER_IDS_API = [
+    '459055303573635084',
+    '425045919025725440',
+    '511297052844621827'
+];
+// -------------------------------------------
+
 // Conexão com MongoDB
 const clientPromise = mongoose.connect(process.env.MONGO_URI)
   .then(connection => {
@@ -38,11 +46,14 @@ app.use(express.json());
 app.use(rateLimit({ windowMs: 15 * 60 * 1000, max: 1000 }));
 
 
-// <-- ROTA ADICIONADA -->
+// <-- ROTA DE MEMBROS ATUALIZADA COM FILTRO -->
 app.get('/api/members', async (req, res) => {
     try {
-        // Busca todos os membros e os ordena por nome de usuário
-        const members = await Member.find().sort({ username: 1 }).lean();
+        // Busca todos os membros que NÃO ESTÃO ($nin) na lista de ignorados e ordena por nome
+        const members = await Member.find({ 
+            discordUserId: { $nin: IGNORED_MEMBER_IDS_API } 
+        }).sort({ username: 1 }).lean();
+        
         res.json({ success: true, members });
     } catch (error) {
         console.error("Erro ao buscar membros:", error);
