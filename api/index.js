@@ -1,34 +1,34 @@
-require('dotenv').config();
-const express = require('express');
 const mongoose = require('mongoose');
-const app = express();
 
-// --- Conexão com MongoDB ---
-// Ele vai pegar a MONGO_URI das suas variáveis de ambiente na Vercel
-mongoose.connect(process.env.MONGO_URI)
- .then(() => console.log('LOG: Conexão com MongoDB iniciada com sucesso.'))
- .catch(err => console.error('LOG: Erro ao iniciar conexão com MongoDB:', err));
+let isConnected = false; // Para evitar múltiplas conexões em ambientes serverless
 
+async function connectMongo() {
+  if (!isConnected) {
+    try {
+      await mongoose.connect(process.env.MONGO_URI);
+      isConnected = true;
+      console.log("✅ MongoDB conectado com sucesso.");
+    } catch (err) {
+      console.error("❌ Erro ao conectar ao MongoDB:", err);
+      throw err;
+    }
+  }
+}
 
-// --- Rota de Teste de Conexão ---
-app.get('/api/test', async (req, res) => {
+module.exports = async (req, res) => {
+  if (req.method !== 'GET') {
+    return res.status(405).end(); // Method Not Allowed
+  }
+
   try {
-    // Verifica se a conexão está ativa fazendo um comando 'ping'
+    await connectMongo();
     await mongoose.connection.db.admin().ping();
-    res.status(200).json({ success: true, message: 'SUCESSO! A conexão com o MongoDB está funcionando!' });
+    return res.status(200).json({ success: true, message: 'Conexão com MongoDB OK!' });
   } catch (error) {
-    // Se o ping falhar, retorna um erro detalhado
-    res.status(500).json({ 
-      success: false, 
-      message: 'FALHA: A API não conseguiu se comunicar com o MongoDB.',
-      error: error.message 
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao conectar com o MongoDB',
+      error: error.message,
     });
   }
-});
-
-// Rota de sessão para o frontend não quebrar
-app.get('/api/session', (req, res) => {
-  res.status(200).json({ isAuthenticated: false });
-});
-
-module.exports = app;
+};
