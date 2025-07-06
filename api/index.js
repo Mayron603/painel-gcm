@@ -6,15 +6,16 @@ if (!process.env.MONGO_URI || !process.env.SESSION_SECRET) {
 }
 
 // Importações de Pacotes
+require('dotenv').config();
+
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const session = require('express-session');
 const helmet = require('helmet');
-const rateLimit = require('express-rate-limit');
+const MongoStore = require('connect-mongo');
 const ExcelJS = require('exceljs');
 const PDFDocument = require('pdfkit');
-const MongoStore = require('connect-mongo');
 
 // Modelos do Banco de Dados
 const Registro = require('../models/Registro.js');
