@@ -261,7 +261,7 @@ app.delete('/api/registros/:pontoId', isAdmin, async (req, res) => {
 const handler = async (req, res) => {
   try {
     // Garante que a conexão com o banco de dados está ativa antes de chamar o app
-    await connectMongo();
+    await clientPromise;
     return app(req, res);
   } catch (error) {
     res.status(500).json({ success: false, message: 'Erro crítico na inicialização da API.', error: error.message });
