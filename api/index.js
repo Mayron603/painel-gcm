@@ -4,6 +4,7 @@ if (!process.env.MONGO_URI || !process.env.SESSION_SECRET) {
     console.error("\nERRO CRÍTICO: Variáveis de ambiente MONGO_URI ou SESSION_SECRET não foram encontradas.");
 }
 
+// Importações de Pacotes
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
@@ -12,10 +13,12 @@ const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const ExcelJS = require('exceljs');
 const PDFDocument = require('pdfkit');
+// --- IMPORTAÇÃO NOVA E ESSENCIAL ---
+const MongoStore = require('connect-mongo');
 
 const app = express();
 
-// CORREÇÃO FINAL: O caminho agora usa ../ para encontrar a pasta /models
+// O caminho para o modelo Registro
 const Registro = require('../models/Registro.js');
 
 // --- Configurações de Segurança ---
@@ -36,11 +39,21 @@ app.use(rateLimit({ windowMs: 15 * 60 * 1000, max: 1000, standardHeaders: true, 
 
 // --- Middlewares ---
 app.use(express.json());
+
+// --- CORREÇÃO FINAL: CONFIGURAÇÃO DE SESSÃO COM MONGOSTORE ---
+// Isso salva a sessão no banco de dados, resolvendo o erro 403 na Vercel.
 app.use(session({
   secret: process.env.SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
-  cookie: { secure: process.env.NODE_ENV === 'production', httpOnly: true, maxAge: 1000 * 60 * 60 * 24, sameSite: 'lax' }
+  store: MongoStore.create({
+      mongoUrl: process.env.MONGO_URI
+  }),
+  cookie: { 
+      secure: process.env.NODE_ENV === 'production', 
+      httpOnly: true, 
+      maxAge: 1000 * 60 * 60 * 24 // 24 horas
+  }
 }));
 
 // --- Conexão com MongoDB ---
@@ -50,7 +63,10 @@ mongoose.connect(process.env.MONGO_URI)
 
 // --- Middleware de Autenticação ---
 const isAdmin = (req, res, next) => {
-  if (req.session.userId && req.session.isAdmin) return next();
+  // Verificação atualizada para garantir que req.session exista
+  if (req.session && req.session.userId && req.session.isAdmin) {
+    return next();
+  }
   res.status(403).json({ success: false, message: 'Acesso negado.' });
 };
 
@@ -183,6 +199,7 @@ app.get('/api/registros/export', isAdmin, async (req, res) => {
             }
             return isValid;
         }).sort((a,b) => new Date(b.entrada) - new Date(a.entrada));
+
         if (format === 'xlsx') {
             const workbook = new ExcelJS.Workbook();
             const worksheet = workbook.addWorksheet('Relatório');
