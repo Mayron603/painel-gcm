@@ -1,5 +1,6 @@
 require('dotenv').config();
 
+// Importações de Pacotes
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
@@ -9,19 +10,24 @@ const MongoStore = require('connect-mongo');
 const ExcelJS = require('exceljs');
 const PDFDocument = require('pdfkit');
 
-// --- Gerenciador de Conexão ---
-let isConnected = false;
+// Modelos do Banco de Dados
+const Registro = require('../models/Registro.js');
+
+// --- GERENCIADOR DE CONEXÃO ROBUSTO PARA VERCEL ---
+let cachedDb = null;
 async function connectMongo() {
-    if (isConnected && mongoose.connection.readyState === 1) return;
-    try {
-        console.log("Iniciando conexão com MongoDB...");
-        await mongoose.connect(process.env.MONGO_URI);
-        isConnected = true;
-        console.log("MongoDB conectado com sucesso.");
-    } catch (err) {
-        console.error("Erro ao conectar ao MongoDB:", err);
-        throw err;
-    }
+  if (cachedDb && mongoose.connection.readyState === 1) {
+    console.log('LOG: Usando conexão de DB em cache.');
+    return;
+  }
+  try {
+    console.log('LOG: Criando nova conexão com o banco de dados...');
+    cachedDb = await mongoose.connect(process.env.MONGO_URI);
+    console.log("LOG: MongoDB conectado com sucesso.");
+  } catch (err) {
+    console.error("LOG: Erro ao conectar ao MongoDB:", err);
+    throw err;
+  }
 }
 
 // --- Criação e Configuração do App Express ---
@@ -36,17 +42,14 @@ app.use(session({
   resave: false,
   saveUninitialized: false,
   store: MongoStore.create({ mongoUrl: process.env.MONGO_URI }),
-  cookie: { 
-      secure: process.env.NODE_ENV === 'production', 
-      httpOnly: true, 
-      maxAge: 1000 * 60 * 60 * 24 
+  cookie: {
+      secure: process.env.NODE_ENV === 'production',
+      httpOnly: true,
+      maxAge: 1000 * 60 * 60 * 24
   }
 }));
 
-// Modelos
-const Registro = require('../models/Registro.js');
-
-// Middleware de Autenticação
+// --- Middleware de Autenticação ---
 const isAdmin = (req, res, next) => {
   if (req.session && req.session.userId && req.session.isAdmin) {
     return next();
@@ -54,18 +57,18 @@ const isAdmin = (req, res, next) => {
   res.status(403).json({ success: false, message: 'Acesso negado.' });
 };
 
-
-// --- ROTAS DA APLICAÇÃO ---
-
-// Função wrapper para garantir a conexão em cada rota
+// --- Função Wrapper para Rotas ---
 const withDB = handler => async (req, res) => {
     try {
         await connectMongo();
-        return handler(req, res);
+        await handler(req, res);
     } catch (error) {
-        res.status(500).json({ success: false, message: 'Erro de conexão com o banco de dados.', error: error.message });
+        console.error("ERRO CAPTURADO PELO WRAPPER:", error);
+        res.status(500).json({ success: false, message: 'Erro interno no servidor.', error: error.message });
     }
 };
+
+// --- ROTAS DA APLICAÇÃO ---
 
 app.post('/api/login', withDB(async (req, res) => {
     if (req.body.email === 'admin' && req.body.password === 'mayron2025') {
@@ -76,13 +79,6 @@ app.post('/api/login', withDB(async (req, res) => {
     res.status(401).json({ success: false, message: 'Credenciais inválidas.' });
 }));
 
-app.get('/api/session', withDB(async (req, res) => {
-    if (req.session && req.session.userId && req.session.isAdmin) {
-        return res.json({ isAuthenticated: true, user: { name: 'Admin GCM', email: 'admin@painel.com', isAdmin: true } });
-    }
-    res.json({ isAuthenticated: false });
-}));
-
 app.post('/api/logout', (req, res) => {
     req.session.destroy(err => {
         if (err) return res.status(500).json({ success: false, message: 'Não foi possível fazer logout.' });
@@ -90,6 +86,45 @@ app.post('/api/logout', (req, res) => {
         res.json({ success: true });
     });
 });
+
+app.get('/api/session', withDB(async (req, res) => {
+    if (req.session && req.session.userId && req.session.isAdmin) {
+        return res.json({ isAuthenticated: true, user: { name: 'Admin GCM', email: 'admin@painel.com', isAdmin: true } });
+    }
+    res.json({ isAuthenticated: false });
+}));
+
+app.get('/api/registros', isAdmin, withDB(async (req, res) => {
+    const { userId, status, startDate, endDate } = req.query;
+    let matchConditions = {};
+    if (userId) matchConditions.userId = userId;
+    const registros = await Registro.find(matchConditions).lean();
+    const filteredRegistros = registros.map(reg => {
+        reg.pontos = reg.pontos.filter(ponto => {
+            let isValid = true;
+            if (status === 'pending' && ponto.saida !== null) isValid = false;
+            if (status === 'completed' && ponto.saida === null) isValid = false;
+            if (startDate && new Date(ponto.entrada) < new Date(startDate)) isValid = false;
+            if (endDate) {
+                const end = new Date(endDate);
+                end.setHours(23, 59, 59, 999);
+                if (new Date(ponto.entrada) > end) isValid = false;
+            }
+            return isValid;
+        });
+        return reg;
+    }).filter(reg => reg.pontos.length > 0);
+    res.json({ success: true, registros: filteredRegistros });
+}));
+
+app.get('/api/unique-users', isAdmin, withDB(async (req, res) => {
+    const users = await Registro.aggregate([
+        { $group: { _id: { userId: "$userId", username: "$username" } } },
+        { $sort: { "_id.username": 1 } },
+        { $project: { userId: "$_id.userId", username: "$_id.username", _id: 0 } }
+    ]);
+    res.json({ success: true, users });
+}));
 
 app.get('/api/dashboard/summary', isAdmin, withDB(async (req, res) => {
     const todayStart = new Date();
@@ -112,9 +147,113 @@ app.get('/api/dashboard/summary', isAdmin, withDB(async (req, res) => {
     res.json({ success: true, totalAgents: totalAgentsResult.length, pendingRegisters, closedToday, hoursToday, weeklyActivity, activityFeed, hourlyActivity: hourlyData });
 }));
 
+app.get('/api/alerts', isAdmin, withDB(async (req, res) => {
+    const twelveHoursAgo = new Date(Date.now() - 12 * 60 * 60 * 1000);
+    const alerts = await Registro.find({
+        'pontos.saida': null,
+        'pontos.entrada': { $lt: twelveHoursAgo }
+    }, 'username pontos.entrada').lean();
+    const longRunningPontos = alerts.map(reg => {
+        const pontoInfo = reg.pontos.find(p => p.saida === null && new Date(p.entrada) < twelveHoursAgo);
+        return pontoInfo ? { username: reg.username, entrada: pontoInfo.entrada } : null;
+    }).filter(Boolean);
+    res.json({ success: true, alerts: longRunningPontos });
+}));
 
-// ... (Adicione aqui suas outras rotas, envolvendo a lógica delas com `withDB(async (req, res) => { ... })`)
+app.get('/api/registros/export', isAdmin, withDB(async (req, res) => {
+    const { format, userId, status, startDate, endDate } = req.query;
+    let matchConditions = {};
+    if (userId) matchConditions.userId = userId;
+    const registros = await Registro.find(matchConditions).lean();
+    const allPontos = registros.flatMap(reg => reg.pontos.map(p => ({...p, username: reg.username })));
+    const filteredPontos = allPontos.filter(ponto => {
+        let isValid = true;
+        if (status === 'pending' && ponto.saida !== null) isValid = false;
+        if (status === 'completed' && ponto.saida === null) isValid = false;
+        if (startDate && new Date(ponto.entrada) < new Date(startDate)) isValid = false;
+        if (endDate) {
+             const end = new Date(endDate);
+             end.setHours(23, 59, 59, 999);
+             if (new Date(ponto.entrada) > end) isValid = false;
+        }
+        return isValid;
+    }).sort((a,b) => new Date(b.entrada) - new Date(a.entrada));
 
+    if (format === 'xlsx') {
+        const workbook = new ExcelJS.Workbook();
+        const worksheet = workbook.addWorksheet('Relatório');
+        worksheet.columns = [
+            { header: 'Usuário', key: 'username', width: 30 }, { header: 'Entrada', key: 'entrada', width: 25 },
+            { header: 'Saída', key: 'saida', width: 25 }, { header: 'Duração (h)', key: 'duracao', width: 15 }
+        ];
+        filteredPontos.forEach(p => {
+            const duracao = p.saida ? ((new Date(p.saida) - new Date(p.entrada)) / 36e5).toFixed(2) : 'N/A';
+            worksheet.addRow({
+                username: p.username,
+                entrada: new Date(p.entrada).toLocaleString('pt-BR'),
+                saida: p.saida ? new Date(p.saida).toLocaleString('pt-BR') : 'Em serviço',
+                duracao: duracao
+            });
+        });
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.setHeader('Content-Disposition', 'attachment; filename="relatorio.xlsx"');
+        await workbook.xlsx.write(res);
+        res.end();
+    } else if (format === 'pdf') {
+        const doc = new PDFDocument({ margin: 30, size: 'A4' });
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', 'attachment; filename="relatorio.pdf"');
+        doc.pipe(res);
+        doc.fontSize(18).text('Relatório de Pontos', { align: 'center' });
+        doc.moveDown(2);
+        filteredPontos.forEach(p => {
+            const duracao = p.saida ? ((new Date(p.saida) - new Date(p.entrada)) / 36e5).toFixed(2) + 'h' : 'Em serviço';
+            doc.fontSize(10).text(
+                `Usuário: ${p.username}\n` + `Entrada: ${new Date(p.entrada).toLocaleString('pt-BR')}\n` +
+                `Saída: ${p.saida ? new Date(p.saida).toLocaleString('pt-BR') : 'N/A'}\n` + `Duração: ${duracao}\n`,
+                { lineGap: 4 }
+            );
+            doc.lineCap('round').moveTo(doc.x, doc.y).lineTo(565, doc.y).strokeColor("#dddddd").stroke();
+            doc.moveDown();
+        });
+        doc.end();
+    } else {
+        res.status(400).send('Formato inválido.');
+    }
+}));
+
+app.post('/api/registros/force-logout/:pontoId', isAdmin, withDB(async (req, res) => {
+    const { pontoId } = req.params;
+    const registro = await Registro.findOne({ "pontos._id": pontoId });
+    if (!registro) return res.status(404).json({ success: false, message: "Registro não encontrado." });
+    const ponto = registro.pontos.id(pontoId);
+    if (ponto.saida) return res.status(400).json({ success: false, message: "Este ponto já está encerrado." });
+    ponto.saida = new Date();
+    await registro.save();
+    res.json({ success: true, message: "Ponto encerrado com sucesso!" });
+}));
+
+app.put('/api/registros/:pontoId', isAdmin, withDB(async (req, res) => {
+    const { pontoId } = req.params;
+    const { entrada, saida } = req.body;
+    if (!entrada || !saida) return res.status(400).json({ success: false, message: "Datas de entrada e saída são obrigatórias." });
+    const result = await Registro.updateOne(
+        { "pontos._id": pontoId },
+        { $set: { "pontos.$.entrada": new Date(entrada), "pontos.$.saida": new Date(saida) } }
+    );
+    if (result.modifiedCount === 0) return res.status(404).json({ success: false, message: "Registro não encontrado ou dados iguais." });
+    res.json({ success: true, message: "Registro atualizado com sucesso!" });
+}));
+
+app.delete('/api/registros/:pontoId', isAdmin, withDB(async (req, res) => {
+    const { pontoId } = req.params;
+    const result = await Registro.updateOne(
+        { "pontos._id": pontoId },
+        { $pull: { pontos: { _id: pontoId } } }
+    );
+    if (result.modifiedCount === 0) return res.status(404).json({ success: false, message: "Registro não encontrado." });
+    res.json({ success: true, message: "Registro excluído com sucesso!" });
+}));
 
 // Exporta o app Express para a Vercel
 module.exports = app;
