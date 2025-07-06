@@ -16,14 +16,13 @@ const ExcelJS = require('exceljs');
 const PDFDocument = require('pdfkit');
 const MongoStore = require('connect-mongo');
 
-const app = express();
-
 // Modelos do Banco de Dados
 const Registro = require('../models/Registro.js');
 
-// --- Gerenciador de Conexão com o MongoDB ---
+// --- Gerenciador de Conexão Robusto para Vercel ---
 let cachedDb = null;
 async function connectMongo() {
+  // Se já temos uma conexão em cache e ela está ativa, a reutilizamos.
   if (cachedDb && mongoose.connection.readyState === 1) {
     console.log('LOG: Usando conexão de DB em cache.');
     return;
@@ -33,16 +32,19 @@ async function connectMongo() {
     cachedDb = await mongoose.connect(process.env.MONGO_URI);
     console.log("LOG: MongoDB conectado com sucesso.");
   } catch (err) {
-    console.error("LOG: Erro ao conectar ao MongoDB:", err);
-    throw err;
+    console.error("LOG: Erro fatal ao conectar ao MongoDB:", err);
+    throw new Error('Falha na conexão com o banco de dados');
   }
 }
 
-// --- Configurações e Middlewares ---
+// --- Criação e Configuração do App Express ---
+const app = express();
+
 app.use(cors({ origin: process.env.CORS_ORIGIN, credentials: true }));
-app.use(helmet({ contentSecurityPolicy: false }));
+app.use(helmet({ contentSecurityPolicy: false })); // Simplificado para evitar problemas de CSP no deploy
 app.use(express.json());
 
+// Configuração de Sessão com MongoStore para persistência na Vercel
 app.use(session({
   secret: process.env.SESSION_SECRET,
   resave: false,
@@ -51,7 +53,7 @@ app.use(session({
   cookie: {
       secure: process.env.NODE_ENV === 'production',
       httpOnly: true,
-      maxAge: 1000 * 60 * 60 * 24
+      maxAge: 1000 * 60 * 60 * 24 // 24 horas
   }
 }));
 
@@ -63,27 +65,16 @@ const isAdmin = (req, res, next) => {
   res.status(403).json({ success: false, message: 'Acesso negado.' });
 };
 
-// --- Função Wrapper para Rotas ---
-const withDB = handler => async (req, res) => {
-    try {
-        await connectMongo();
-        return await handler(req, res);
-    } catch (error) {
-        console.error("ERRO CAPTURADO PELO WRAPPER:", error);
-        res.status(500).json({ success: false, message: 'Erro interno no servidor.', error: error.message });
-    }
-};
-
 // --- ROTAS DA APLICAÇÃO ---
 
-app.post('/api/login', withDB(async (req, res) => {
+app.post('/api/login', async (req, res) => {
     if (req.body.email === 'admin' && req.body.password === 'mayron2025') {
         req.session.userId = 'admin_user';
         req.session.isAdmin = true;
         return res.json({ success: true, user: { name: 'Admin GCM', email: 'admin@painel.com', isAdmin: true } });
     }
     res.status(401).json({ success: false, message: 'Credenciais inválidas.' });
-}));
+});
 
 app.post('/api/logout', (req, res) => {
     req.session.destroy(err => {
@@ -93,14 +84,14 @@ app.post('/api/logout', (req, res) => {
     });
 });
 
-app.get('/api/session', withDB(async (req, res) => {
+app.get('/api/session', (req, res) => {
     if (req.session && req.session.userId && req.session.isAdmin) {
         return res.json({ isAuthenticated: true, user: { name: 'Admin GCM', email: 'admin@painel.com', isAdmin: true } });
     }
     res.json({ isAuthenticated: false });
-}));
+});
 
-app.get('/api/registros', isAdmin, withDB(async (req, res) => {
+app.get('/api/registros', isAdmin, async (req, res) => {
     const { userId, status, startDate, endDate } = req.query;
     let matchConditions = {};
     if (userId) matchConditions.userId = userId;
@@ -121,18 +112,18 @@ app.get('/api/registros', isAdmin, withDB(async (req, res) => {
         return reg;
     }).filter(reg => reg.pontos.length > 0);
     res.json({ success: true, registros: filteredRegistros });
-}));
+});
 
-app.get('/api/unique-users', isAdmin, withDB(async (req, res) => {
+app.get('/api/unique-users', isAdmin, async (req, res) => {
     const users = await Registro.aggregate([
         { $group: { _id: { userId: "$userId", username: "$username" } } },
         { $sort: { "_id.username": 1 } },
         { $project: { userId: "$_id.userId", username: "$_id.username", _id: 0 } }
     ]);
     res.json({ success: true, users });
-}));
+});
 
-app.get('/api/dashboard/summary', isAdmin, withDB(async (req, res) => {
+app.get('/api/dashboard/summary', isAdmin, async (req, res) => {
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
     const [
@@ -151,9 +142,9 @@ app.get('/api/dashboard/summary', isAdmin, withDB(async (req, res) => {
     const hourlyData = Array(24).fill(0);
     hourlyActivity.forEach(item => { hourlyData[item._id] = item.count; });
     res.json({ success: true, totalAgents: totalAgentsResult.length, pendingRegisters, closedToday, hoursToday, weeklyActivity, activityFeed, hourlyActivity: hourlyData });
-}));
+});
 
-app.get('/api/alerts', isAdmin, withDB(async (req, res) => {
+app.get('/api/alerts', isAdmin, async (req, res) => {
     const twelveHoursAgo = new Date(Date.now() - 12 * 60 * 60 * 1000);
     const alerts = await Registro.find({
         'pontos.saida': null,
@@ -164,9 +155,9 @@ app.get('/api/alerts', isAdmin, withDB(async (req, res) => {
         return pontoInfo ? { username: reg.username, entrada: pontoInfo.entrada } : null;
     }).filter(Boolean);
     res.json({ success: true, alerts: longRunningPontos });
-}));
+});
 
-app.get('/api/registros/export', isAdmin, withDB(async (req, res) => {
+app.get('/api/registros/export', isAdmin, async (req, res) => {
     const { format, userId, status, startDate, endDate } = req.query;
     let matchConditions = {};
     if (userId) matchConditions.userId = userId;
@@ -225,9 +216,9 @@ app.get('/api/registros/export', isAdmin, withDB(async (req, res) => {
     } else {
         res.status(400).send('Formato inválido.');
     }
-}));
+});
 
-app.post('/api/registros/force-logout/:pontoId', isAdmin, withDB(async (req, res) => {
+app.post('/api/registros/force-logout/:pontoId', isAdmin, async (req, res) => {
     const { pontoId } = req.params;
     const registro = await Registro.findOne({ "pontos._id": pontoId });
     if (!registro) return res.status(404).json({ success: false, message: "Registro não encontrado." });
@@ -236,9 +227,9 @@ app.post('/api/registros/force-logout/:pontoId', isAdmin, withDB(async (req, res
     ponto.saida = new Date();
     await registro.save();
     res.json({ success: true, message: "Ponto encerrado com sucesso!" });
-}));
+});
 
-app.put('/api/registros/:pontoId', isAdmin, withDB(async (req, res) => {
+app.put('/api/registros/:pontoId', isAdmin, async (req, res) => {
     const { pontoId } = req.params;
     const { entrada, saida } = req.body;
     if (!entrada || !saida) return res.status(400).json({ success: false, message: "Datas de entrada e saída são obrigatórias." });
@@ -248,9 +239,9 @@ app.put('/api/registros/:pontoId', isAdmin, withDB(async (req, res) => {
     );
     if (result.modifiedCount === 0) return res.status(404).json({ success: false, message: "Registro não encontrado ou dados iguais." });
     res.json({ success: true, message: "Registro atualizado com sucesso!" });
-}));
+});
 
-app.delete('/api/registros/:pontoId', isAdmin, withDB(async (req, res) => {
+app.delete('/api/registros/:pontoId', isAdmin, async (req, res) => {
     const { pontoId } = req.params;
     const result = await Registro.updateOne(
         { "pontos._id": pontoId },
@@ -258,7 +249,20 @@ app.delete('/api/registros/:pontoId', isAdmin, withDB(async (req, res) => {
     );
     if (result.modifiedCount === 0) return res.status(404).json({ success: false, message: "Registro não encontrado." });
     res.json({ success: true, message: "Registro excluído com sucesso!" });
-}));
+});
 
-// Exporta o app Express para a Vercel
-module.exports = app;
+
+// --- Handler Final para a Vercel ---
+// Envolvemos o app Express em um handler assíncrono para garantir a conexão com o DB
+const handler = async (req, res) => {
+  try {
+    await connectMongo();
+    // Passa a requisição para o app Express, que conhece todas as rotas
+    return app(req, res);
+  } catch (error) {
+    // Se a conexão inicial com o DB falhar, retorna um erro genérico
+    res.status(500).json({ success: false, message: 'Erro crítico no servidor.', error: error.message });
+  }
+};
+
+module.exports = handler;
