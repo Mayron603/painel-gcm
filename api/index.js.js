@@ -1,11 +1,9 @@
 require('dotenv').config();
 
-// Validação de variáveis de ambiente essenciais
 if (!process.env.MONGO_URI || !process.env.SESSION_SECRET) {
     console.error("\nERRO CRÍTICO: Variáveis de ambiente MONGO_URI ou SESSION_SECRET não foram encontradas.");
 }
 
-// Importações de Pacotes
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
@@ -17,7 +15,7 @@ const PDFDocument = require('pdfkit');
 
 const app = express();
 
-// CORREÇÃO: O caminho para o modelo foi ajustado para a estrutura da Vercel (../)
+// CORREÇÃO FINAL: O caminho agora usa ../ para encontrar a pasta /models
 const Registro = require('../models/Registro.js');
 
 // --- Configurações de Segurança ---
@@ -25,7 +23,7 @@ app.use(
   helmet({
     contentSecurityPolicy: {
       directives: {
-        ...helmet.contentSecuritypolicy.getDefaultDirectives(),
+        ...helmet.contentSecurityPolicy.getDefaultDirectives(),
         "script-src": ["'self'", "'unsafe-inline'", "https://cdn.tailwindcss.com", "https://cdn.jsdelivr.net/npm/"],
         "style-src": ["'self'", "'unsafe-inline'", "https://cdnjs.cloudflare.com", "https://fonts.googleapis.com"],
         "font-src": ["'self'", "https://cdnjs.cloudflare.com", "https://fonts.gstatic.com"],
@@ -56,7 +54,9 @@ const isAdmin = (req, res, next) => {
   res.status(403).json({ success: false, message: 'Acesso negado.' });
 };
 
-// --- Rotas de Autenticação ---
+// --- ROTAS DA APLICAÇÃO ---
+
+// Autenticação
 app.post('/api/login', async (req, res) => {
     if (req.body.email === 'admin' && req.body.password === 'mayron2025') {
         req.session.userId = 'admin_user';
@@ -81,8 +81,7 @@ app.get('/api/session', (req, res) => {
   res.json({ isAuthenticated: false });
 });
 
-// --- Rotas de Dados e Funcionalidades ---
-
+// Dados e Funcionalidades
 app.get('/api/registros', isAdmin, async (req, res) => {
   try {
     const { userId, status, startDate, endDate } = req.query;
@@ -184,7 +183,6 @@ app.get('/api/registros/export', isAdmin, async (req, res) => {
             }
             return isValid;
         }).sort((a,b) => new Date(b.entrada) - new Date(a.entrada));
-
         if (format === 'xlsx') {
             const workbook = new ExcelJS.Workbook();
             const worksheet = workbook.addWorksheet('Relatório');
@@ -235,7 +233,7 @@ app.get('/api/registros/export', isAdmin, async (req, res) => {
     }
 });
 
-// --- Rotas de Gestão ---
+// Gestão de Registros
 app.post('/api/registros/force-logout/:pontoId', isAdmin, async (req, res) => {
     try {
         const { pontoId } = req.params;
@@ -281,9 +279,5 @@ app.delete('/api/registros/:pontoId', isAdmin, async (req, res) => {
     }
 });
 
-// A Vercel gerencia as rotas do frontend através do vercel.json, então esta linha não é necessária aqui.
-// app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
-
-// A Vercel gerencia o servidor, então app.listen() não é necessário.
-// A linha abaixo é a única coisa que precisa ser exportada.
+// A Vercel gerencia o servidor, então a linha abaixo é a única coisa que precisa ser exportada.
 module.exports = app;
