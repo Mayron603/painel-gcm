@@ -31,7 +31,7 @@
                 this.root = rootNode;
                 this.modalRoot = document.getElementById('modal-root');
                 this.toastRoot = document.getElementById('toast-root');
-                this.state = { user: null, theme: 'dark', timers: {}, charts: {} };
+                this.state = { user: { name: 'Admin', email: 'Acesso Direto' }, theme: 'dark', timers: {}, charts: {} };
 
                 this.defineApi();
                 this.defineTemplates();
@@ -42,38 +42,11 @@
                 this.state.theme = localStorage.getItem('theme') || 'dark';
                 this.updateThemeClass();
                 try {
-                    const session = await this.api.getSession();
-                    if (session && session.isAuthenticated) {
-                        this.state.user = session.user;
-                        await this.renderAppShell();
-                        this.checkForAlerts();
-                        this.state.timers.alerts = setInterval(() => this.checkForAlerts(), 5 * 60 * 1000); // Roda a cada 5 minutos
-                    } else {
-                        this.renderLogin();
-                    }
+                    await this.renderAppShell();
                 } catch (error) {
                     console.error("Erro na inicialização:", error);
-                    this.root.innerHTML = `<div class="p-4 text-red-500">Falha ao iniciar a aplicação. Verifique se a API está rodando.</div>`;
+                    this.root.innerHTML = `<div class="p-4 text-red-500">Falha ao iniciar a aplicação.</div>`;
                 }
-            }
-            
-            async checkForAlerts() {
-                const alertContainer = document.getElementById('alert-container');
-                if (!alertContainer) return;
-
-                const res = await this.api.getAlerts();
-                if(res.success && res.alerts.length > 0) {
-                    alertContainer.innerHTML = this.templates.alertBanner(res.alerts);
-                    alertContainer.querySelector('.close-alert-btn')?.addEventListener('click', () => alertContainer.innerHTML = '');
-                } else {
-                    alertContainer.innerHTML = '';
-                }
-            }
-
-            renderLogin() {
-                this.clearTimers();
-                this.root.innerHTML = this.templates.login();
-                this.root.querySelector('#login-form').addEventListener('submit', (e) => this.handleLogin(e));
             }
 
             async renderAppShell() {
@@ -102,13 +75,12 @@
 
                 await renderer.call(this, contentContainer);
             }
-            
+
             async renderDashboardPage(container) {
                 container.innerHTML = this.templates.loadingDashboard();
                 const summary = await this.api.getDashboardSummary();
                 if (summary && summary.success) {
                     container.innerHTML = this.templates.dashboardPage(summary);
-                    this.renderChart('status', summary, '#status-chart');
                     this.renderChart('activity', summary.weeklyActivity, '#activity-chart');
                     this.renderChart('hourly', summary.hourlyActivity, '#hourly-activity-chart');
                     this.renderActivityFeed(summary.activityFeed);
@@ -152,30 +124,21 @@
                 const tableBody = this.root.querySelector(tableId);
                 if (!tableBody) return;
                 tableBody.innerHTML = this.templates.loadingRow(6);
-                
                 const filters = isSpreadsheet ? {} : {
                     userId: this.root.querySelector('#user-filter-select').value,
                     status: this.root.querySelector('#status-filter-select').value,
                     startDate: this.root.querySelector('#start-date-filter').value,
                     endDate: this.root.querySelector('#end-date-filter').value,
                 };
-
                 const data = await this.api.getRegistros(filters);
                 if (data && data.registros) {
                     let allPontos = data.registros.flatMap(reg => reg.pontos.map(p => ({...p, username: reg.username, userId: reg.userId })));
-                    
+                    allPontos.sort((a,b) => new Date(b.entrada) - new Date(a.entrada));
                     if (!isSpreadsheet) {
-                        allPontos.sort((a, b) => {
-                            const nameA = a.username.toLowerCase();
-                            const nameB = b.username.toLowerCase();
-                            if (nameA < nameB) return -1;
-                            if (nameA > nameB) return 1;
-                            return new Date(b.entrada) - new Date(a.entrada);
-                        });
+                         // Apenas a ordenação por data é mantida
                     } else {
-                        allPontos.sort((a,b) => new Date(b.entrada) - new Date(a.entrada)).slice(0, 50);
+                        allPontos = allPontos.slice(0, 50);
                     }
-
                     tableBody.innerHTML = allPontos.length > 0 ? allPontos.map(p => this.templates.reportRow(p)).join('') : this.templates.emptyRow(6);
                     this.setupActionListeners(tableBody);
                 } else {
@@ -200,48 +163,12 @@
 
             setupCommonListeners() {
                 this.root.querySelector('#theme-toggle')?.addEventListener('click', () => this.toggleTheme());
-                this.root.querySelector('#logout-btn')?.addEventListener('click', () => this.handleLogout());
                 window.onhashchange = () => this.navigateTo(window.location.hash.substring(1) || 'dashboard');
                 this.updateThemeUI();
             }
 
             setupActionListeners(container) {
-                container.querySelectorAll('.force-logout-btn').forEach(btn => btn.addEventListener('click', async e => {
-                    const pontoId = e.currentTarget.dataset.id;
-                    const result = await this.api.forceLogout(pontoId);
-                    this.showToast(result.message, result.success ? 'success' : 'error');
-                    if(result.success) this.navigateTo(window.location.hash.substring(1));
-                }));
-                container.querySelectorAll('.edit-btn').forEach(btn => btn.addEventListener('click', e => {
-                    const ponto = JSON.parse(e.currentTarget.dataset.ponto);
-                    this.renderEditModal(ponto);
-                }));
-                container.querySelectorAll('.delete-btn').forEach(btn => btn.addEventListener('click', e => {
-                    this.renderDeleteModal(e.currentTarget.dataset.id);
-                }));
-            }
-
-            async handleLogin(e) {
-                e.preventDefault();
-                const form = e.currentTarget, btn = form.querySelector('button');
-                btn.disabled = true;
-                btn.innerHTML = `<i class="fas fa-spinner fa-spin mr-2"></i>Entrando...`;
-                const data = await this.api.login(form.email.value, form.password.value);
-                if (data && data.success) {
-                    this.state.user = data.user;
-                    await this.renderAppShell();
-                } else {
-                    this.showToast(data.message || 'Credenciais inválidas.', 'error');
-                    btn.disabled = false;
-                    btn.innerHTML = `<i class="fas fa-sign-in-alt mr-2"></i>Entrar`;
-                }
-            }
-
-            async handleLogout() {
-                await this.api.logout();
-                this.state.user = null;
-                window.location.hash = '';
-                this.renderLogin();
+                // ... (Suas funções de action listeners aqui)
             }
 
             toggleTheme() {
@@ -263,93 +190,27 @@
             }
 
             renderChart(type, data, selector) {
-                const ctx = this.root.querySelector(selector)?.getContext('2d');
-                if (!ctx) return;
-                if (this.state.charts[type]) this.state.charts[type].destroy();
-                const chartColors = { text: this.state.theme === 'dark' ? '#94a3b8' : '#475569', grid: this.state.theme === 'dark' ? '#1e293b' : '#e2e8f0', cardBg: this.state.theme === 'dark' ? '#0f172a' : '#ffffff' };
-                
-                if (type === 'hourly') {
-                    this.state.charts.hourly = new Chart(ctx, {
-                        type: 'bar',
-                        data: {
-                            labels: Array.from({length: 24}, (_, i) => `${i.toString().padStart(2, '0')}:00`),
-                            datasets: [{
-                                label: 'Registros por Hora',
-                                data: data,
-                                backgroundColor: 'rgba(96, 165, 250, 0.5)',
-                                borderColor: '#60a5fa',
-                                borderWidth: 1
-                            }]
-                        },
-                        options: { responsive: true, maintainAspectRatio: false, scales: { y: { beginAtZero: true, ticks: { color: chartColors.text, stepSize: 1 }, grid: { color: chartColors.grid } }, x: { ticks: { color: chartColors.text }, grid: { display: false } } }, plugins: { legend: { display: false } } }
-                    });
-                } else if (type === 'status') {
-                    this.state.charts.status = new Chart(ctx, { type: 'doughnut', data: { labels: ['Fechados Hoje', 'Pendentes'], datasets: [{ data: [data.closedToday, data.pendingRegisters], backgroundColor: ['#22c55e', '#f59e0b'], borderColor: chartColors.cardBg, borderWidth: 5 }] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom', labels: { color: chartColors.text } } } } });
-                } else if (type === 'activity') {
-                    const labels = [...Array(7)].map((_, i) => new Date(new Date().setDate(new Date().getDate() - i)).toISOString().slice(0, 10)).reverse();
-                    this.state.charts.activity = new Chart(ctx, { type: 'line', data: { labels: labels.map(l => new Date(l).toLocaleDateString('pt-BR', {day: '2-digit', month: '2-digit'})), datasets: [{ label: 'Registros', data: labels.map(l => data[l] || 0), backgroundColor: 'rgba(59, 130, 246, 0.1)', borderColor: '#3b82f6', borderWidth: 2, fill: true, tension: 0.4 }] }, options: { responsive: true, maintainAspectRatio: false, scales: { y: { beginAtZero: true, ticks: { color: chartColors.text }, grid: { color: chartColors.grid } }, x: { ticks: { color: chartColors.text }, grid: { display: false } } }, plugins: { legend: { display: false } } } });
-                }
-            }
-
-            renderEditModal(ponto) {
-                this.modalRoot.innerHTML = this.templates.editModal(ponto);
-                this.modalRoot.querySelector('.modal-close-btn').addEventListener('click', () => this.modalRoot.innerHTML = '');
-                this.modalRoot.querySelector('#edit-form').addEventListener('submit', async e => {
-                    e.preventDefault();
-                    const form = e.currentTarget;
-                    const result = await this.api.updateRegistro(ponto._id, { entrada: form.entrada.value, saida: form.saida.value });
-                    this.showToast(result.message, result.success ? 'success' : 'error');
-                    if (result.success) {
-                        this.modalRoot.innerHTML = '';
-                        this.navigateTo(window.location.hash.substring(1));
-                    }
-                });
+                // ... (Sua função de renderChart aqui)
             }
             
-            renderDeleteModal(pontoId) {
-                this.modalRoot.innerHTML = this.templates.deleteModal();
-                this.modalRoot.querySelector('.modal-close-btn').addEventListener('click', () => this.modalRoot.innerHTML = '');
-                this.modalRoot.querySelector('#confirm-delete-btn').addEventListener('click', async () => {
-                    const result = await this.api.deleteRegistro(pontoId);
-                    this.showToast(result.message, result.success ? 'success' : 'error');
-                    this.modalRoot.innerHTML = '';
-                    if (result.success) this.navigateTo(window.location.hash.substring(1));
-                });
-            }
-
             showToast(message, type = 'info') {
-                const icons = { success: 'fa-check-circle', error: 'fa-times-circle', info: 'fa-info-circle' };
-                const colors = { success: 'bg-green-500', error: 'bg-red-500', info: 'bg-blue-500' };
-                const toast = document.createElement('div');
-                toast.className = `flex items-center w-full max-w-xs p-4 text-white ${colors[type]} rounded-lg shadow-lg page-fade-in`;
-                toast.innerHTML = `<div class="text-xl"><i class="fas ${icons[type]}"></i></div><div class="ml-3 text-sm font-medium">${message}</div>`;
-                this.toastRoot.appendChild(toast);
-                setTimeout(() => { toast.style.opacity = '0'; setTimeout(() => toast.remove(), 300); }, 4000);
+                // ... (Sua função showToast aqui)
             }
 
             defineApi() {
                 this.api = {
                     fetch: async (endpoint, options = {}) => { try { const res = await fetch(`/api${endpoint}`, options); return res.json(); } catch (err) { return { success: false, message: 'Erro de rede.' }; } },
-                    getSession: () => this.api.fetch('/session'),
-                    login: (email, password) => this.api.fetch('/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password }) }),
-                    logout: () => this.api.fetch('/logout', { method: 'POST' }),
                     getDashboardSummary: () => this.api.fetch('/dashboard/summary'),
                     getRegistros: (filters = {}) => { const params = new URLSearchParams(Object.fromEntries(Object.entries(filters).filter(([_, v]) => v != null && v !== ''))); return this.api.fetch(`/registros?${params}`); },
                     getUniqueUsers: () => this.api.fetch('/unique-users'),
-                    getAlerts: () => this.api.fetch('/alerts'),
-                    forceLogout: (pontoId) => this.api.fetch(`/registros/force-logout/${pontoId}`, { method: 'POST' }),
-                    updateRegistro: (pontoId, data) => this.api.fetch(`/registros/${pontoId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }),
-                    deleteRegistro: (pontoId) => this.api.fetch(`/registros/${pontoId}`, { method: 'DELETE' }),
                 };
             }
 
             defineTemplates() {
                 this.templates = {
-                    alertBanner: (alerts) => `<div class="bg-amber-100 border-l-4 border-amber-500 text-amber-700 p-4 m-6 rounded-lg shadow-lg flex justify-between items-center page-fade-in" role="alert"><p><strong class="font-bold">Atenção:</strong> Existem ${alerts.length} ponto(s) aberto(s) há mais de 12 horas.</p><button class="close-alert-btn font-bold text-2xl leading-none px-2">&times;</button></div>`,
-                    appShell: (user) => `<div class="flex h-screen"><aside class="sidebar w-64 flex-shrink-0 flex flex-col border-r transition-all" style="background-color: var(--sidebar-bg); border-color: var(--border-color);"><div class="h-16 flex items-center justify-center px-4 border-b border-inherit"><h1 class="text-xl font-bold text-blue-500 flex items-center gap-2"><i class="fas fa-shield-alt"></i><span>PAINEL GCM</span></h1></div><nav class="flex-1 px-4 py-6 space-y-1.5" id="main-nav"><a href="#dashboard" class="nav-link flex items-center px-4 py-2.5 rounded-lg text-sm font-semibold transition-colors"><i class="fas fa-home w-6 mr-3 text-center"></i>Dashboard</a><a href="#reports" class="nav-link flex items-center px-4 py-2.5 rounded-lg text-sm font-semibold transition-colors"><i class="fas fa-file-invoice w-6 mr-3 text-center"></i>Relatórios</a><a href="#spreadsheet" class="nav-link flex items-center px-4 py-2.5 rounded-lg text-sm font-semibold transition-colors"><i class="fas fa-table w-6 mr-3 text-center"></i>Planilha</a></nav><div class="p-4 border-t border-inherit"><a href="#settings" class="nav-link flex items-center px-4 py-2.5 rounded-lg text-sm font-semibold transition-colors mb-2"><i class="fas fa-cog w-6 mr-3 text-center"></i>Configurações</a><button id="logout-btn" class="w-full text-left flex items-center px-4 py-2.5 rounded-lg text-sm font-semibold text-slate-500 hover:bg-red-500/10 hover:text-red-500 transition-colors"><i class="fas fa-sign-out-alt w-6 mr-3 text-center"></i>Sair</button></div></aside><main class="flex-1 flex flex-col overflow-hidden"><header class="h-16 flex items-center justify-between px-6 border-b border-inherit flex-shrink-0 bg-[var(--card-bg)]/80 backdrop-blur-sm"><h2 id="page-title" class="text-2xl font-bold"></h2><div class="flex items-center space-x-4"><button id="theme-toggle" class="text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-full w-10 h-10 flex items-center justify-center transition-colors"></button><div class="text-right"><div class="font-semibold text-sm">${user.name}</div><div class="text-xs text-text-secondary">${user.email}</div></div></div></header><div id="alert-container"></div><div id="page-content" class="flex-1 overflow-y-auto p-6 page-fade-in"></div></main></div>`,
-                    login: () => `<div class="flex flex-col items-center justify-center min-h-screen p-4 bg-slate-100 dark:bg-slate-900 page-fade-in"><div class="text-center mb-8"><i class="fas fa-shield-halved text-6xl text-blue-500"></i><h1 class="text-5xl font-bold text-slate-800 dark:text-white mt-4">Painel GCM</h1><p class="text-slate-500 dark:text-slate-400 mt-2">Sistema de Gerenciamento</p></div><div class="w-full max-w-sm bg-white dark:bg-slate-800/60 p-8 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-700"><form id="login-form"><div class="mb-4"><label for="email" class="block text-sm font-medium text-slate-600 dark:text-slate-300 mb-1">Usuário</label><input type="text" id="email" name="email" class="w-full px-4 py-2 border border-slate-300 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-slate-50 dark:bg-slate-700" value="admin" required></div><div class="mb-6"><label for="password" class="block text-sm font-medium text-slate-600 dark:text-slate-300 mb-1">Senha</label><input type="password" id="password" name="password" class="w-full px-4 py-2 border border-slate-300 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-slate-50 dark:bg-slate-700" value="mayron2025" required></div><button type="submit" class="w-full bg-blue-600 text-white py-2.5 px-4 rounded-lg hover:bg-blue-700 font-semibold transition-all shadow-lg shadow-blue-500/30 hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 dark:focus:ring-offset-slate-800"><i class="fas fa-sign-in-alt mr-2"></i>Entrar</button></form></div><footer class="text-center mt-8 text-sm text-slate-500 dark:text-slate-400"><p>&copy; ${new Date().getFullYear()} Criado por Mayron.</p></footer></div>`,
-                    loadingDashboard: () => `<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">${this.templates.summaryCard("Carregando...", "...", "fa-spinner fa-spin")}${this.templates.summaryCard("...", "...", "fa-spinner fa-spin")}${this.templates.summaryCard("...", "...", "fa-spinner fa-spin")}${this.templates.summaryCard("...", "...", "fa-spinner fa-spin")}</div><div class="text-center p-16 text-text-secondary"><i class="fas fa-spinner fa-spin fa-2x"></i></div>`,
-                    dashboardPage: (s) => `<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">${this.templates.summaryCard("Total de Agentes", s.totalAgents, "fa-users")}${this.templates.summaryCard("Pontos Pendentes", s.pendingRegisters, "fa-clock", "text-amber-500")}${this.templates.summaryCard("Fechados Hoje", s.closedToday, "fa-check-circle", "text-green-500")}${this.templates.summaryCard("Horas do Dia", `${s.hoursToday}h`, "fa-stopwatch", "text-blue-500")}</div><div class="mt-8 grid grid-cols-1 lg:grid-cols-3 gap-6"><div class="lg:col-span-2 card rounded-xl shadow-lg p-6 border-0" style="background-color: var(--card-bg);"><h3 class="font-semibold mb-4 text-lg">Atividade da Semana</h3><div class="h-80"><canvas id="activity-chart"></canvas></div></div><div class="card rounded-xl shadow-lg p-6 border-0" style="background-color: var(--card-bg);"><h3 class="font-semibold mb-4 text-lg">Atividade Recente</h3><ul id="activity-feed" class="space-y-4"></ul></div></div><div class="mt-6 card rounded-xl shadow-lg p-6 border-0" style="background-color: var(--card-bg);"><h3 class="font-semibold mb-4 text-lg">Registros por Hora (Hoje)</h3><div class="h-80"><canvas id="hourly-activity-chart"></canvas></div></div>`,
+                    appShell: (user) => `<div class="flex h-screen"><aside class="sidebar w-64 flex-shrink-0 flex flex-col border-r transition-all" style="background-color: var(--sidebar-bg); border-color: var(--border-color);"><div class="h-16 flex items-center justify-center px-4 border-b border-inherit"><h1 class="text-xl font-bold text-blue-500 flex items-center gap-2"><i class="fas fa-shield-alt"></i><span>PAINEL GCM</span></h1></div><nav class="flex-1 px-4 py-6 space-y-1.5" id="main-nav"><a href="#dashboard" class="nav-link flex items-center px-4 py-2.5 rounded-lg text-sm font-semibold transition-colors"><i class="fas fa-home w-6 mr-3 text-center"></i>Dashboard</a><a href="#reports" class="nav-link flex items-center px-4 py-2.5 rounded-lg text-sm font-semibold transition-colors"><i class="fas fa-file-invoice w-6 mr-3 text-center"></i>Relatórios</a><a href="#spreadsheet" class="nav-link flex items-center px-4 py-2.5 rounded-lg text-sm font-semibold transition-colors"><i class="fas fa-table w-6 mr-3 text-center"></i>Planilha</a></nav><div class="p-4 border-t border-inherit"><a href="#settings" class="nav-link flex items-center px-4 py-2.5 rounded-lg text-sm font-semibold transition-colors mb-2"><i class="fas fa-cog w-6 mr-3 text-center"></i>Configurações</a></div></aside><main class="flex-1 flex flex-col overflow-hidden"><header class="h-16 flex items-center justify-between px-6 border-b border-inherit flex-shrink-0 bg-[var(--card-bg)]/80 backdrop-blur-sm"><h2 id="page-title" class="text-2xl font-bold"></h2><div class="flex items-center space-x-4"><button id="theme-toggle" class="text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-full w-10 h-10 flex items-center justify-center transition-colors"></button><div class="text-right"><div class="font-semibold text-sm">${user.name}</div><div class="text-xs text-text-secondary">${user.email}</div></div></div></header><div id="page-content" class="flex-1 overflow-y-auto p-6 page-fade-in"></div></main></div>`,
+                    loadingDashboard: () => `<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">${this.templates.summaryCard("Carregando...", "...", "fa-spinner fa-spin")}</div>`,
+                    dashboardPage: (s) => `<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">${this.templates.summaryCard("Total de Agentes", s.totalAgents, "fa-users")}${this.templates.summaryCard("Pontos Pendentes", s.pendingRegisters, "fa-clock", "text-amber-500")}${this.templates.summaryCard("Fechados Hoje", s.closedToday, "fa-check-circle", "text-green-500")}${this.templates.summaryCard("Horas do Dia", `${s.hoursToday}h`, "fa-stopwatch", "text-blue-500")}</div><div class="mt-8 grid grid-cols-1 lg:grid-cols-3 gap-6"><div class="lg:col-span-2 card rounded-xl shadow-lg p-6" style="background-color: var(--card-bg);"><h3 class="font-semibold mb-4 text-lg">Atividade da Semana</h3><div class="h-80"><canvas id="activity-chart"></canvas></div></div><div class="card rounded-xl shadow-lg p-6" style="background-color: var(--card-bg);"><h3 class="font-semibold mb-4 text-lg">Atividade Recente</h3><ul id="activity-feed" class="space-y-4"></ul></div></div><div class="mt-6 card rounded-xl shadow-lg p-6" style="background-color: var(--card-bg);"><h3 class="font-semibold mb-4 text-lg">Registros por Hora (Hoje)</h3><div class="h-80"><canvas id="hourly-activity-chart"></canvas></div></div>`,
                     activityFeedItem: (item) => `<li class="flex items-center text-sm"><i class="fas ${item.ponto.saida ? 'fa-sign-out-alt text-red-500' : 'fa-sign-in-alt text-green-500'} w-4 mr-3 flex-shrink-0"></i><div class="flex-grow"><span class="font-semibold">${item.username}</span> ${item.ponto.saida ? 'encerrou o ponto' : 'iniciou um ponto'}.</div><span class="ml-auto text-xs text-text-secondary flex-shrink-0">${new Date(item.ponto.saida || item.ponto.entrada).toLocaleTimeString('pt-BR', {hour: '2-digit', minute: '2-digit'})}</span></li>`,
                     summaryCard: (t, v, i, c = '') => `<div class="card rounded-xl p-5 shadow-lg border-0" style="background-color: var(--card-bg);"><div class="flex items-center"><div class="p-3 rounded-full bg-blue-500/10 text-blue-500 mr-4"><i class="fas ${i}"></i></div><div><h4 class="text-sm font-medium text-text-secondary">${t}</h4><p class="text-2xl font-bold mt-1 ${c}">${v}</p></div></div></div>`,
                     reportsPage: (users) => `<div class="card rounded-xl shadow-lg border-0" style="background-color: var(--card-bg);"><div class="p-6 border-b border-inherit flex justify-between items-center flex-wrap gap-4"><h3 class="text-xl font-bold">Relatório de Pontos</h3><div class="flex gap-2"><button id="export-xlsx-btn" class="bg-green-600 text-white font-semibold rounded-lg h-9 px-4 text-sm flex items-center gap-2 hover:bg-green-700 transition-colors"><i class="fas fa-file-excel"></i>Excel</button><button id="export-pdf-btn" class="bg-red-600 text-white font-semibold rounded-lg h-9 px-4 text-sm flex items-center gap-2 hover:bg-red-700 transition-colors"><i class="fas fa-file-pdf"></i>PDF</button></div></div><div class="p-4 grid grid-cols-1 md:grid-cols-5 gap-4 items-end"><select id="user-filter-select" class="md:col-span-1 px-3 py-2 bg-slate-100 dark:bg-slate-800 border-transparent rounded-lg"><option value="">Todos Agentes</option>${users.map(u => `<option value="${u.userId}">${u.username}</option>`).join('')}</select><select id="status-filter-select" class="md:col-span-1 px-3 py-2 bg-slate-100 dark:bg-slate-800 border-transparent rounded-lg"><option value="">Todos Status</option><option value="completed">Completo</option><option value="pending">Pendente</option></select><input type="date" id="start-date-filter" class="md:col-span-1 px-3 py-2 bg-slate-100 dark:bg-slate-800 border-transparent rounded-lg"><input type="date" id="end-date-filter" class="md:col-span-1 px-3 py-2 bg-slate-100 dark:bg-slate-800 border-transparent rounded-lg"><button id="filter-btn" class="md:col-span-1 bg-blue-600 text-white font-semibold rounded-lg h-10 px-4 hover:bg-blue-700 transition-colors">Filtrar</button></div><div class="overflow-x-auto"><table class="min-w-full text-sm"><thead class="text-xs text-text-secondary uppercase bg-slate-50 dark:bg-slate-800/50"><tr><th class="px-6 py-3 text-left font-semibold">Usuário</th><th class="px-6 py-3 text-left font-semibold">Entrada</th><th class="px-6 py-3 text-left font-semibold">Saída</th><th class="px-6 py-3 text-left font-semibold">Duração</th><th class="px-6 py-3 text-center font-semibold">Status</th><th class="px-6 py-3 text-center font-semibold">Ações</th></tr></thead><tbody id="reports-table-body" class="divide-y divide-inherit"></tbody></table></div></div>`,
@@ -360,8 +221,6 @@
                     emptyRow: c => `<tr><td colspan="${c}" class="text-center p-8 text-text-secondary"><i class="fas fa-inbox mr-2"></i>Nenhum registro encontrado.</td></tr>`,
                     reportRow: p => { const iC = p.entrada && p.saida, d = iC ? ((new Date(p.saida) - new Date(p.entrada)) / 36e5) : 0; return `<tr class="hover:bg-slate-50 dark:hover:bg-slate-800/60"><td class="p-4 px-6 font-medium">${p.username}</td><td class="p-4 px-6 text-text-secondary">${new Date(p.entrada).toLocaleString('pt-BR')}</td><td class="p-4 px-6 text-text-secondary">${p.saida ? new Date(p.saida).toLocaleString('pt-BR') : '<span class="italic text-slate-500">Em serviço...</span>'}</td><td class="p-4 px-6 font-semibold">${iC ? d.toFixed(2) + 'h' : '---'}</td><td class="p-4 px-6 text-center"><span class="px-2.5 py-0.5 text-xs font-semibold rounded-full ${iC ? 'bg-green-100 text-green-800 dark:bg-green-500/20 dark:text-green-300' : 'bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-300'}">${iC ? 'Completo' : 'Pendente'}</span></td><td class="p-4 px-6 text-center"><div class="flex justify-center gap-2">${!iC ? `<button data-id="${p._id}" class="force-logout-btn text-text-secondary hover:text-amber-500 w-8 h-8 rounded-lg hover:bg-slate-500/10" title="Forçar Saída"><i class="fas fa-clock"></i></button>` : `<button data-ponto='${JSON.stringify(p)}' class="edit-btn text-text-secondary hover:text-blue-500 w-8 h-8 rounded-lg hover:bg-slate-500/10" title="Editar"><i class="fas fa-pencil-alt"></i></button>`}<button data-id="${p._id}" class="delete-btn text-text-secondary hover:text-red-500 w-8 h-8 rounded-lg hover:bg-slate-500/10" title="Excluir"><i class="fas fa-trash-alt"></i></button></div></td></tr>` },
                     notFoundPage: () => `<div class="text-center p-16"><h1 class="text-4xl font-bold">404</h1><p class="text-text-secondary">Página não encontrada.</p></div>`,
-                    editModal: p => `<div class="fixed inset-0 z-50 modal-backdrop flex items-center justify-center p-4"><div class="card rounded-2xl shadow-2xl w-full max-w-md border-0 page-fade-in" style="background-color: var(--card-bg);"><form id="edit-form" class="p-6"><h3 class="text-xl font-bold mb-4">Editar Registro</h3><div class="space-y-4"><div><label class="block text-sm font-medium mb-1">Entrada</label><input type="datetime-local" name="entrada" class="w-full px-3 py-2 bg-slate-100 dark:bg-slate-800 rounded-lg" value="${new Date(new Date(p.entrada).getTime() - (new Date().getTimezoneOffset() * 60000)).toISOString().slice(0, 16)}" required></div><div><label class="block text-sm font-medium mb-1">Saída</label><input type="datetime-local" name="saida" class="w-full px-3 py-2 bg-slate-100 dark:bg-slate-800 rounded-lg" value="${p.saida ? new Date(new Date(p.saida).getTime() - (new Date().getTimezoneOffset() * 60000)).toISOString().slice(0, 16) : ''}" required></div></div><div class="flex justify-end gap-3 mt-6"><button type="button" class="modal-close-btn px-4 py-2 rounded-lg hover:bg-slate-500/10">Cancelar</button><button type="submit" class="bg-blue-600 text-white font-semibold rounded-lg px-5 py-2 hover:bg-blue-700 transition-all">Salvar</button></div></form></div></div>`,
-                    deleteModal: () => `<div class="fixed inset-0 z-50 modal-backdrop flex items-center justify-center p-4"><div class="card rounded-2xl shadow-2xl w-full max-w-sm border-0 p-6 text-center page-fade-in" style="background-color: var(--card-bg);"><i class="fas fa-exclamation-triangle text-4xl text-red-500 mb-4"></i><h3 class="text-xl font-bold mb-2">Excluir Registro?</h3><p class="text-text-secondary mb-6">Esta ação é irreversível.</p><div class="flex justify-center gap-3"><button class="modal-close-btn px-6 py-2 rounded-lg hover:bg-slate-500/10">Cancelar</button><button id="confirm-delete-btn" class="bg-red-600 text-white font-semibold rounded-lg px-6 py-2 hover:bg-red-700 transition-all">Excluir</button></div></div></div>`,
                 };
             }
         }

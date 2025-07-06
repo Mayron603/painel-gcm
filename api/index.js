@@ -1,6 +1,6 @@
 require('dotenv').config();
 
-// Validação de variáveis de ambiente essenciais
+// Validação de variáveis de ambiente
 if (!process.env.MONGO_URI || !process.env.SESSION_SECRET) {
     console.error("\nERRO CRÍTICO: Variáveis de ambiente MONGO_URI ou SESSION_SECRET não foram encontradas.");
 }
@@ -22,7 +22,6 @@ const Registro = require('../models/Registro.js');
 // --- Gerenciador de Conexão Robusto para Vercel ---
 let cachedDb = null;
 async function connectMongo() {
-  // Se já temos uma conexão em cache e ela está ativa, a reutilizamos.
   if (cachedDb && mongoose.connection.readyState === 1) {
     console.log('LOG: Usando conexão de DB em cache.');
     return;
@@ -32,7 +31,7 @@ async function connectMongo() {
     cachedDb = await mongoose.connect(process.env.MONGO_URI);
     console.log("LOG: MongoDB conectado com sucesso.");
   } catch (err) {
-    console.error("LOG: Erro fatal ao conectar ao MongoDB:", err);
+    console.error("LOG: Erro ao conectar ao MongoDB:", err);
     throw new Error('Falha na conexão com o banco de dados');
   }
 }
@@ -41,10 +40,9 @@ async function connectMongo() {
 const app = express();
 
 app.use(cors({ origin: process.env.CORS_ORIGIN, credentials: true }));
-app.use(helmet({ contentSecurityPolicy: false })); // Simplificado para evitar problemas de CSP no deploy
+app.use(helmet({ contentSecurityPolicy: false }));
 app.use(express.json());
 
-// Configuração de Sessão com MongoStore para persistência na Vercel
 app.use(session({
   secret: process.env.SESSION_SECRET,
   resave: false,
@@ -53,7 +51,7 @@ app.use(session({
   cookie: {
       secure: process.env.NODE_ENV === 'production',
       httpOnly: true,
-      maxAge: 1000 * 60 * 60 * 24 // 24 horas
+      maxAge: 1000 * 60 * 60 * 24
   }
 }));
 
@@ -67,7 +65,7 @@ const isAdmin = (req, res, next) => {
 
 // --- ROTAS DA APLICAÇÃO ---
 
-app.post('/api/login', async (req, res) => {
+app.post('/api/login', (req, res) => {
     if (req.body.email === 'admin' && req.body.password === 'mayron2025') {
         req.session.userId = 'admin_user';
         req.session.isAdmin = true;
@@ -251,16 +249,13 @@ app.delete('/api/registros/:pontoId', isAdmin, async (req, res) => {
     res.json({ success: true, message: "Registro excluído com sucesso!" });
 });
 
-
 // --- Handler Final para a Vercel ---
-// Envolvemos o app Express em um handler assíncrono para garantir a conexão com o DB
 const handler = async (req, res) => {
   try {
     await connectMongo();
-    // Passa a requisição para o app Express, que conhece todas as rotas
+    // Passa a requisição para o app Express, que agora conhece todas as rotas
     return app(req, res);
   } catch (error) {
-    // Se a conexão inicial com o DB falhar, retorna um erro genérico
     res.status(500).json({ success: false, message: 'Erro crítico no servidor.', error: error.message });
   }
 };
