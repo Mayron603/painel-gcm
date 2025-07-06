@@ -1,15 +1,15 @@
 require('dotenv').config();
 
+// Validação de variáveis de ambiente essenciais
 if (!process.env.MONGO_URI || !process.env.SESSION_SECRET) {
     console.error("\nERRO CRÍTICO: Variáveis de ambiente MONGO_URI ou SESSION_SECRET não foram encontradas.");
-    process.exit(1);
 }
 
+// Importações de Pacotes
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const session = require('express-session');
-const path = require('path');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const ExcelJS = require('exceljs');
@@ -17,15 +17,15 @@ const PDFDocument = require('pdfkit');
 
 const app = express();
 
-// Garanta que o caminho para seu modelo está correto
-const Registro = require('./models/Registro');
+// CORREÇÃO: O caminho para o modelo foi ajustado para a estrutura da Vercel (../)
+const Registro = require('../models/Registro.js');
 
 // --- Configurações de Segurança ---
 app.use(
   helmet({
     contentSecurityPolicy: {
       directives: {
-        ...helmet.contentSecurityPolicy.getDefaultDirectives(),
+        ...helmet.contentSecuritypolicy.getDefaultDirectives(),
         "script-src": ["'self'", "'unsafe-inline'", "https://cdn.tailwindcss.com", "https://cdn.jsdelivr.net/npm/"],
         "style-src": ["'self'", "'unsafe-inline'", "https://cdnjs.cloudflare.com", "https://fonts.googleapis.com"],
         "font-src": ["'self'", "https://cdnjs.cloudflare.com", "https://fonts.gstatic.com"],
@@ -33,10 +33,11 @@ app.use(
     },
   })
 );
+app.use(cors({ origin: '*', credentials: true }));
+app.use(rateLimit({ windowMs: 15 * 60 * 1000, max: 1000, standardHeaders: true, legacyHeaders: false }));
 
 // --- Middlewares ---
 app.use(express.json());
-app.use(express.static(path.join(__dirname, 'public')));
 app.use(session({
   secret: process.env.SESSION_SECRET,
   resave: false,
@@ -47,10 +48,7 @@ app.use(session({
 // --- Conexão com MongoDB ---
 mongoose.connect(process.env.MONGO_URI)
  .then(() => console.log('✅ Conexão da API com o MongoDB estabelecida!'))
- .catch(err => {
-     console.error('Erro na conexão com MongoDB:', err);
-     process.exit(1);
- });
+ .catch(err => console.error('Erro na conexão com MongoDB:', err));
 
 // --- Middleware de Autenticação ---
 const isAdmin = (req, res, next) => {
@@ -59,9 +57,6 @@ const isAdmin = (req, res, next) => {
 };
 
 // --- Rotas de Autenticação ---
-
-// IMPORTANTE: Recomendo fortemente que você mude esta lógica para usar
-// as variáveis de ambiente (process.env) como discutimos anteriormente para maior segurança.
 app.post('/api/login', async (req, res) => {
     if (req.body.email === 'admin' && req.body.password === 'mayron2025') {
         req.session.userId = 'admin_user';
@@ -73,9 +68,7 @@ app.post('/api/login', async (req, res) => {
 
 app.post('/api/logout', (req, res) => {
     req.session.destroy(err => {
-        if (err) {
-            return res.status(500).json({ success: false, message: 'Não foi possível fazer logout.' });
-        }
+        if (err) return res.status(500).json({ success: false, message: 'Não foi possível fazer logout.' });
         res.clearCookie('connect.sid');
         res.json({ success: true });
     });
@@ -88,35 +81,31 @@ app.get('/api/session', (req, res) => {
   res.json({ isAuthenticated: false });
 });
 
-// --- Rotas de Dados ---
+// --- Rotas de Dados e Funcionalidades ---
 
 app.get('/api/registros', isAdmin, async (req, res) => {
   try {
     const { userId, status, startDate, endDate } = req.query;
     let matchConditions = {};
     if (userId) matchConditions.userId = userId;
-
     const registros = await Registro.find(matchConditions).lean();
-
     const filteredRegistros = registros.map(reg => {
         reg.pontos = reg.pontos.filter(ponto => {
             let isValid = true;
             if (status === 'pending' && ponto.saida !== null) isValid = false;
             if (status === 'completed' && ponto.saida === null) isValid = false;
-            if (startDate && ponto.entrada < new Date(startDate)) isValid = false;
+            if (startDate && new Date(ponto.entrada) < new Date(startDate)) isValid = false;
             if (endDate) {
                 const end = new Date(endDate);
                 end.setHours(23, 59, 59, 999);
-                if (ponto.entrada > end) isValid = false;
+                if (new Date(ponto.entrada) > end) isValid = false;
             }
             return isValid;
         });
         return reg;
     }).filter(reg => reg.pontos.length > 0);
-
     res.json({ success: true, registros: filteredRegistros });
   } catch (error) {
-    console.error("Erro em /api/registros:", error);
     res.status(500).json({ success: false, message: 'Erro ao buscar registros.' });
   }
 });
@@ -130,27 +119,16 @@ app.get('/api/unique-users', isAdmin, async (req, res) => {
         ]);
         res.json({ success: true, users });
     } catch(e) {
-        console.error("Erro em /api/unique-users:", e);
         res.status(500).json({ success: false, message: 'Erro ao buscar usuários únicos.' });
     }
 });
-
-
-// --- Rotas de Funcionalidades Novas ---
 
 app.get('/api/dashboard/summary', isAdmin, async (req, res) => {
   try {
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
-
     const [
-        totalAgentsResult,
-        pendingRegisters,
-        closedToday,
-        hoursTodayResult,
-        weeklyActivityResult,
-        activityFeed,
-        hourlyActivity
+        totalAgentsResult, pendingRegisters, closedToday, hoursTodayResult, weeklyActivityResult, activityFeed, hourlyActivity
     ] = await Promise.all([
       Registro.distinct('userId'),
       Registro.countDocuments({ 'pontos.saida': null }),
@@ -160,25 +138,12 @@ app.get('/api/dashboard/summary', isAdmin, async (req, res) => {
       Registro.aggregate([ { $unwind: "$pontos" }, { $sort: { "entrada": -1 } }, { $limit: 5 }, { $project: { username: 1, 'ponto': '$pontos', entrada: '$pontos.entrada', saida: '$pontos.saida' } } ]),
       Registro.aggregate([ { $unwind: '$pontos' }, { $match: { 'pontos.entrada': { $gte: todayStart } } }, { $group: { _id: { $hour: { date: '$pontos.entrada', timezone: 'America/Sao_Paulo' } }, count: { $sum: 1 } } }, { $sort: { '_id': 1 } } ])
     ]);
-
     const hoursToday = hoursTodayResult.length > 0 ? (hoursTodayResult[0].totalMillis / 3600000).toFixed(1) : 0;
     const weeklyActivity = weeklyActivityResult.reduce((acc, day) => ({ ...acc, [day._id]: day.count }), {});
-    
     const hourlyData = Array(24).fill(0);
     hourlyActivity.forEach(item => { hourlyData[item._id] = item.count; });
-
-    res.json({
-        success: true,
-        totalAgents: totalAgentsResult.length,
-        pendingRegisters,
-        closedToday,
-        hoursToday,
-        weeklyActivity,
-        activityFeed,
-        hourlyActivity: hourlyData
-    });
+    res.json({ success: true, totalAgents: totalAgentsResult.length, pendingRegisters, closedToday, hoursToday, weeklyActivity, activityFeed, hourlyActivity: hourlyData });
   } catch (error) {
-      console.error("Erro em /api/dashboard/summary:", error);
       res.status(500).json({ success: false, message: 'Erro ao calcular estatísticas.' });
   }
 });
@@ -190,18 +155,12 @@ app.get('/api/alerts', isAdmin, async (req, res) => {
             'pontos.saida': null,
             'pontos.entrada': { $lt: twelveHoursAgo }
         }, 'username pontos.entrada').lean();
-
         const longRunningPontos = alerts.map(reg => {
             const pontoInfo = reg.pontos.find(p => p.saida === null && new Date(p.entrada) < twelveHoursAgo);
-            return {
-                username: reg.username,
-                entrada: pontoInfo.entrada
-            };
+            return pontoInfo ? { username: reg.username, entrada: pontoInfo.entrada } : null;
         }).filter(Boolean);
-
         res.json({ success: true, alerts: longRunningPontos });
     } catch(e) {
-        console.error("Erro em /api/alerts:", e);
         res.status(500).json({ success: false, message: 'Erro ao buscar alertas.' });
     }
 });
@@ -211,10 +170,8 @@ app.get('/api/registros/export', isAdmin, async (req, res) => {
         const { format, userId, status, startDate, endDate } = req.query;
         let matchConditions = {};
         if (userId) matchConditions.userId = userId;
-
         const registros = await Registro.find(matchConditions).lean();
         const allPontos = registros.flatMap(reg => reg.pontos.map(p => ({...p, username: reg.username })));
-
         const filteredPontos = allPontos.filter(ponto => {
             let isValid = true;
             if (status === 'pending' && ponto.saida !== null) isValid = false;
@@ -246,21 +203,17 @@ app.get('/api/registros/export', isAdmin, async (req, res) => {
                     duracao: duracao
                 });
             });
-
             res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
             res.setHeader('Content-Disposition', 'attachment; filename="relatorio.xlsx"');
             await workbook.xlsx.write(res);
             res.end();
-
         } else if (format === 'pdf') {
             const doc = new PDFDocument({ margin: 30, size: 'A4' });
             res.setHeader('Content-Type', 'application/pdf');
             res.setHeader('Content-Disposition', 'attachment; filename="relatorio.pdf"');
             doc.pipe(res);
-
             doc.fontSize(18).text('Relatório de Pontos', { align: 'center' });
             doc.moveDown(2);
-
             filteredPontos.forEach(p => {
                 const duracao = p.saida ? ((new Date(p.saida) - new Date(p.entrada)) / 36e5).toFixed(2) + 'h' : 'Em serviço';
                 doc.fontSize(10).text(
@@ -273,13 +226,11 @@ app.get('/api/registros/export', isAdmin, async (req, res) => {
                 doc.lineCap('round').moveTo(doc.x, doc.y).lineTo(565, doc.y).strokeColor("#dddddd").stroke();
                 doc.moveDown();
             });
-
             doc.end();
         } else {
             res.status(400).send('Formato inválido.');
         }
     } catch(e) {
-        console.error("Erro em /api/registros/export:", e);
         res.status(500).send('Erro ao gerar relatório.');
     }
 });
@@ -290,10 +241,8 @@ app.post('/api/registros/force-logout/:pontoId', isAdmin, async (req, res) => {
         const { pontoId } = req.params;
         const registro = await Registro.findOne({ "pontos._id": pontoId });
         if (!registro) return res.status(404).json({ success: false, message: "Registro não encontrado." });
-
         const ponto = registro.pontos.id(pontoId);
         if (ponto.saida) return res.status(400).json({ success: false, message: "Este ponto já está encerrado." });
-
         ponto.saida = new Date();
         await registro.save();
         res.json({ success: true, message: "Ponto encerrado com sucesso!" });
@@ -307,12 +256,10 @@ app.put('/api/registros/:pontoId', isAdmin, async (req, res) => {
         const { pontoId } = req.params;
         const { entrada, saida } = req.body;
         if (!entrada || !saida) return res.status(400).json({ success: false, message: "Datas de entrada e saída são obrigatórias." });
-
         const result = await Registro.updateOne(
             { "pontos._id": pontoId },
             { $set: { "pontos.$.entrada": new Date(entrada), "pontos.$.saida": new Date(saida) } }
         );
-
         if (result.modifiedCount === 0) return res.status(404).json({ success: false, message: "Registro não encontrado ou dados iguais." });
         res.json({ success: true, message: "Registro atualizado com sucesso!" });
     } catch (error) {
@@ -327,7 +274,6 @@ app.delete('/api/registros/:pontoId', isAdmin, async (req, res) => {
             { "pontos._id": pontoId },
             { $pull: { pontos: { _id: pontoId } } }
         );
-
         if (result.modifiedCount === 0) return res.status(404).json({ success: false, message: "Registro não encontrado." });
         res.json({ success: true, message: "Registro excluído com sucesso!" });
     } catch (error) {
@@ -335,9 +281,9 @@ app.delete('/api/registros/:pontoId', isAdmin, async (req, res) => {
     }
 });
 
+// A Vercel gerencia as rotas do frontend através do vercel.json, então esta linha não é necessária aqui.
+// app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
-// Rota final para servir o frontend. Deve ser a última.
-app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
-
-const PORT = process.env.PORT || 3000;
-module.exports = app;(PORT, () => console.log(`✅ Servidor da API rodando na porta ${PORT}`));
+// A Vercel gerencia o servidor, então app.listen() não é necessário.
+// A linha abaixo é a única coisa que precisa ser exportada.
+module.exports = app;
