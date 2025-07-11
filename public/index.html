@@ -317,7 +317,8 @@
                         const totalHoursEl = this.root.querySelector('#report-total-hours');
                         if (totalHoursEl) {
                             totalHoursEl.innerHTML = `Tempo Total no Período: <span class="text-blue-500 font-bold">${this.formatDuration(data.totalDuration)}</span>`;
-                            totalHoursEl.style.display = (filters.startDate || filters.endDate) ? 'block' : 'none';
+                            // CORREÇÃO AQUI: Mostra o total sempre que houver duração
+                            totalHoursEl.style.display = data.totalDuration > 0 ? 'block' : 'none';
                         }
                     }
                 } else {
