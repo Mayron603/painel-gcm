@@ -46,6 +46,7 @@ app.use(express.json());
 app.use(rateLimit({ windowMs: 15 * 60 * 1000, max: 1000 }));
 
 // HIERARQUIA DE CARGOS (Do maior para o menor)
+// ATENÇÃO: Os nomes aqui devem ser EXATAMENTE iguais aos nomes dos cargos no Discord.
 const roleHierarchy = [
     'Inspetor Superintendente',
     'Inspetor de Agrupamento',
@@ -62,22 +63,30 @@ const roleHierarchy = [
 
 // Função auxiliar para obter o nível hierárquico de um membro
 const getRoleLevel = (member) => {
-    let level = Infinity; // Padrão para quem não tem cargo na hierarquia
+    let level = Infinity; 
+    let highestRole = 'Nenhum';
     const memberRoles = member.roles.map(r => r.name);
+
     for (const role of memberRoles) {
         const roleIndex = roleHierarchy.indexOf(role);
         if (roleIndex !== -1 && roleIndex < level) {
             level = roleIndex;
+            highestRole = role;
         }
     }
+    // LOG DE DEPURAÇÃO: Mostra o nível calculado para cada membro
+    console.log(`[DEPURAÇÃO] Membro: ${member.username} | Cargos: [${memberRoles.join(', ')}] | Cargo Mais Alto: ${highestRole} | Nível de Ordenação: ${level}`);
     return level;
 };
 
 app.get('/api/members', async (req, res) => {
     try {
+        console.log("\n--- [DEPURAÇÃO] A INICIAR PEDIDO /api/members ---");
         const members = await Member.find({ 
             discordUserId: { $nin: IGNORED_MEMBER_IDS_API } 
         }).lean();
+        
+        console.log(`[DEPURAÇÃO] Foram encontrados ${members.length} membros. A calcular níveis de hierarquia...`);
         
         // Ordenação customizada pela hierarquia
         members.sort((a, b) => {
@@ -87,9 +96,11 @@ app.get('/api/members', async (req, res) => {
             if (levelA !== levelB) {
                 return levelA - levelB;
             }
-            // Se os níveis forem iguais, ordena por nome de usuário
             return a.username.localeCompare(b.username);
         });
+        
+        console.log("[DEPURAÇÃO] Ordenação concluída. A enviar resposta.");
+        console.log("--- [DEPURAÇÃO] FIM DO PEDIDO /api/members ---\n");
 
         res.json({ success: true, members });
     } catch (error) {
@@ -97,6 +108,7 @@ app.get('/api/members', async (req, res) => {
         res.status(500).json({ success: false, message: 'Erro ao buscar membros.' });
     }
 });
+
 
 const getWeekDateRange = (year, week) => {
     const d = new Date(year, 0, 1 + (week - 1) * 7);
