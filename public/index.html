@@ -248,7 +248,7 @@
             
             setupReportListeners() {
                 this.root.querySelector('#filter-btn').addEventListener('click', () => {
-                    this.state.activeReportFilter = null; // Desativa o filtro rápido se o manual for usado
+                    this.state.activeReportFilter = null;
                     this.updateQuickFilterButtons();
                     this.renderReportTable(false);
                 });
@@ -259,17 +259,22 @@
                     this.renderReportsPage(this.root.querySelector('#page-content'));
                 });
 
-                // Listeners para os botões de filtro rápido
                 const todayBtn = this.root.querySelector('#qf-today');
                 const weekBtn = this.root.querySelector('#qf-week');
                 const monthBtn = this.root.querySelector('#qf-month');
                 const startDateInput = this.root.querySelector('#start-date-filter');
                 const endDateInput = this.root.querySelector('#end-date-filter');
 
-                const toISODateString = (date) => date.toISOString().split('T')[0];
+                // FUNÇÃO CORRIGIDA PARA EVITAR PROBLEMAS DE FUSO HORÁRIO
+                const toLocalISOString = (date) => {
+                    const year = date.getFullYear();
+                    const month = (date.getMonth() + 1).toString().padStart(2, '0');
+                    const day = date.getDate().toString().padStart(2, '0');
+                    return `${year}-${month}-${day}`;
+                };
 
                 todayBtn.addEventListener('click', () => {
-                    const today = toISODateString(new Date());
+                    const today = toLocalISOString(new Date());
                     startDateInput.value = today;
                     endDateInput.value = today;
                     this.state.activeReportFilter = 'today';
@@ -279,14 +284,15 @@
 
                 weekBtn.addEventListener('click', () => {
                     const today = new Date();
-                    const dayOfWeek = today.getDay();
-                    const diff = today.getDate() - dayOfWeek + (dayOfWeek === 0 ? -6 : 1);
-                    const monday = new Date(today.setDate(diff));
+                    const dayOfWeek = today.getDay(); // 0 = Domingo, 1 = Segunda, ...
+                    const diffToMonday = today.getDate() - dayOfWeek + (dayOfWeek === 0 ? -6 : 1);
+                    const monday = new Date(today.setDate(diffToMonday));
+                    
                     const sunday = new Date(monday);
                     sunday.setDate(monday.getDate() + 6);
                     
-                    startDateInput.value = toISODateString(monday);
-                    endDateInput.value = toISODateString(sunday);
+                    startDateInput.value = toLocalISOString(monday);
+                    endDateInput.value = toLocalISOString(sunday);
                     this.state.activeReportFilter = 'week';
                     this.updateQuickFilterButtons();
                     this.renderReportTable(false);
@@ -297,14 +303,13 @@
                     const firstDay = new Date(today.getFullYear(), today.getMonth(), 1);
                     const lastDay = new Date(today.getFullYear(), today.getMonth() + 1, 0);
 
-                    startDateInput.value = toISODateString(firstDay);
-                    endDateInput.value = toISODateString(lastDay);
+                    startDateInput.value = toLocalISOString(firstDay);
+                    endDateInput.value = toLocalISOString(lastDay);
                     this.state.activeReportFilter = 'month';
                     this.updateQuickFilterButtons();
                     this.renderReportTable(false);
                 });
 
-                // Desativa o filtro rápido se o usuário mudar a data manualmente
                 startDateInput.addEventListener('change', () => {
                     this.state.activeReportFilter = null;
                     this.updateQuickFilterButtons();
