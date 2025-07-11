@@ -74,7 +74,10 @@
 
             async navigateTo(page) {
                 this.clearTimers();
-                this.state.selectedReportUser = null; // Reseta usuário ao navegar
+                // Não reseta o usuário selecionado se a navegação for para a mesma página (ex: refresh com filtros)
+                if (!window.location.hash.includes(page)) {
+                    this.state.selectedReportUser = null; 
+                }
                 const contentContainer = this.root.querySelector('#page-content');
                 if (!contentContainer) return;
 
@@ -84,7 +87,7 @@
 
                 const pageRenderers = {
                     dashboard: this.renderDashboardPage,
-                    ranking: this.renderRankingPage, // <-- ROTA ADICIONADA
+                    ranking: this.renderRankingPage,
                     reports: this.renderReportsPage,
                     spreadsheet: this.renderSpreadsheetPage,
                     members: this.renderMembersPage,
@@ -109,7 +112,6 @@
                 }
             }
             
-            // FUNÇÃO PARA FORMATAR DURAÇÃO
             formatDuration(ms, format = 'full') {
                 if (isNaN(ms) || ms < 0) return 'N/A';
                 if (format === 'hours') return `${(ms / 3600000).toFixed(2)}h`;
@@ -130,7 +132,6 @@
                     : '<p class="text-sm text-text-secondary text-center py-4">Nenhuma atividade recente.</p>';
             }
             
-            // NOVA PÁGINA DE RANKING
             async renderRankingPage(container) {
                 container.innerHTML = this.templates.loadingDashboard();
                 const [weeklyRes, monthlyRes] = await Promise.all([
@@ -145,15 +146,12 @@
                 }
             }
 
-            // PÁGINA DE RELATÓRIOS MODIFICADA
             async renderReportsPage(container) {
-                container.innerHTML = this.templates.loadingDashboard(); // Reutiliza o loading
+                container.innerHTML = this.templates.loadingDashboard();
                 
                 if (this.state.selectedReportUser) {
-                    // Se um usuário está selecionado, mostra a view de relatório dele
                     await this.renderReportForUser(container, this.state.selectedReportUser);
                 } else {
-                    // Se não, mostra a lista de usuários para selecionar
                     const usersResponse = await this.api.getUniqueUsers();
                     if (usersResponse.success) {
                         container.innerHTML = this.templates.reportUserListPage(usersResponse.users);
@@ -163,7 +161,7 @@
                                 const userId = e.currentTarget.dataset.userid;
                                 const username = e.currentTarget.dataset.username;
                                 this.state.selectedReportUser = { userId, username };
-                                this.renderReportsPage(container); // Re-renderiza a página
+                                this.renderReportsPage(container);
                             });
                         });
                     } else {
@@ -174,16 +172,15 @@
 
             async renderReportForUser(container, user) {
                 container.innerHTML = this.templates.reportsPage(user);
-                this.root.querySelector('#filter-btn').addEventListener('click', () => this.renderReportTable());
+                this.root.querySelector('#filter-btn').addEventListener('click', () => this.renderReportTable(false));
                 this.root.querySelector('#export-xlsx-btn').addEventListener('click', () => this.exportReport('xlsx'));
                 this.root.querySelector('#export-pdf-btn').addEventListener('click', () => this.exportReport('pdf'));
                 this.root.querySelector('#back-to-users-btn').addEventListener('click', () => {
                     this.state.selectedReportUser = null;
                     this.renderReportsPage(container);
                 });
-                await this.renderReportTable();
+                await this.renderReportTable(false);
             }
-
 
             async renderMembersPage(container) {
                 container.innerHTML = this.templates.loadingDashboard();
@@ -206,10 +203,9 @@
                 }
             }
 
-
             exportReport(format) {
                 const filters = {
-                    userId: this.state.selectedReportUser.userId, // Sempre filtra pelo usuário selecionado
+                    userId: this.state.selectedReportUser.userId,
                     status: this.root.querySelector('#status-filter-select').value,
                     startDate: this.root.querySelector('#start-date-filter').value,
                     endDate: this.root.querySelector('#end-date-filter').value,
@@ -219,11 +215,14 @@
                 window.open(`/api/registros/export?${params.toString()}`, '_blank');
             }
 
+            // FUNÇÃO CORRIGIDA
             async renderReportTable(isSpreadsheet = false) {
                 const tableId = isSpreadsheet ? '#spreadsheet-table-body' : '#reports-table-body';
                 const tableBody = this.root.querySelector(tableId);
                 if (!tableBody) return;
-                tableBody.innerHTML = this.templates.loadingRow(6);
+
+                const colspan = isSpreadsheet ? 6 : 5;
+                tableBody.innerHTML = this.templates.loadingRow(colspan);
                 
                 const filters = isSpreadsheet ? {} : {
                     userId: this.state.selectedReportUser?.userId,
@@ -233,7 +232,7 @@
                 };
                 
                 if (!isSpreadsheet && !filters.userId) {
-                    tableBody.innerHTML = this.templates.emptyRow(6);
+                    tableBody.innerHTML = this.templates.emptyRow(colspan);
                     return;
                 }
 
@@ -245,10 +244,12 @@
                     
                     if(isSpreadsheet) allPontos = allPontos.slice(0, 50);
 
-                    tableBody.innerHTML = allPontos.length > 0 ? allPontos.map(p => this.templates.reportRow(p, this.formatDuration)).join('') : this.templates.emptyRow(6);
+                    const rowTemplate = isSpreadsheet ? this.templates.spreadsheetRow : this.templates.reportRow;
+
+                    tableBody.innerHTML = allPontos.length > 0 ? allPontos.map(p => rowTemplate(p, this.formatDuration)).join('') : this.templates.emptyRow(colspan);
                     this.setupActionListeners(tableBody);
                 } else {
-                    tableBody.innerHTML = this.templates.emptyRow(6);
+                    tableBody.innerHTML = this.templates.emptyRow(colspan);
                 }
             }
 
@@ -389,7 +390,7 @@
                 this.api = {
                     fetch: async (endpoint, options = {}) => { try { const res = await fetch(`/api${endpoint}`, options); return res.json(); } catch (err) { return { success: false, message: 'Erro de rede.' }; } },
                     getDashboardSummary: () => this.api.fetch('/dashboard/summary'),
-                    getRanking: (period) => this.api.fetch(`/ranking?period=${period}`), // <-- API DO RANKING
+                    getRanking: (period) => this.api.fetch(`/ranking?period=${period}`),
                     getRegistros: (filters = {}) => { const params = new URLSearchParams(Object.fromEntries(Object.entries(filters).filter(([_, v]) => v != null && v !== ''))); return this.api.fetch(`/registros?${params}`); },
                     getUniqueUsers: () => this.api.fetch('/unique-users'),
                     getAlerts: () => this.api.fetch('/alerts'),
@@ -404,7 +405,6 @@ defineTemplates() {
     this.templates = {
         alertBanner: (alerts) => `<div class="bg-amber-100 border-l-4 border-amber-500 text-amber-700 p-4 m-6 rounded-lg shadow-lg flex justify-between items-center page-fade-in" role="alert"><p><strong class="font-bold">Atenção:</strong> Existem ${alerts.length} ponto(s) aberto(s) há mais de 12 horas.</p><button class="close-alert-btn font-bold text-2xl leading-none px-2">&times;</button></div>`,
         
-        // APP SHELL COM LINK PARA RANKING
         appShell: (user) => `<div class="flex h-screen"><aside class="sidebar w-64 flex-shrink-0 flex flex-col border-r transition-all" style="background-color: var(--sidebar-bg); border-color: var(--border-color);"><div class="h-16 flex items-center justify-center px-4 border-b border-inherit"><h1 class="text-xl font-bold text-blue-500 flex items-center gap-2"><i class="fas fa-shield-alt"></i><span>PAINEL GCM</span></h1></div><nav class="flex-1 px-4 py-6 space-y-1.5" id="main-nav"><a href="#dashboard" class="nav-link flex items-center px-4 py-2.5 rounded-lg text-sm font-semibold transition-colors"><i class="fas fa-home w-6 mr-3 text-center"></i>Dashboard</a><a href="#ranking" class="nav-link flex items-center px-4 py-2.5 rounded-lg text-sm font-semibold transition-colors"><i class="fas fa-trophy w-6 mr-3 text-center"></i>Ranking</a><a href="#reports" class="nav-link flex items-center px-4 py-2.5 rounded-lg text-sm font-semibold transition-colors"><i class="fas fa-file-invoice w-6 mr-3 text-center"></i>Relatórios</a><a href="#spreadsheet" class="nav-link flex items-center px-4 py-2.5 rounded-lg text-sm font-semibold transition-colors"><i class="fas fa-table w-6 mr-3 text-center"></i>Planilha</a><a href="#members" class="nav-link flex items-center px-4 py-2.5 rounded-lg text-sm font-semibold transition-colors"><i class="fas fa-users w-6 mr-3 text-center"></i>Membros</a></nav><div class="p-4 border-t border-inherit"><a href="#settings" class="nav-link flex items-center px-4 py-2.5 rounded-lg text-sm font-semibold transition-colors mb-2"><i class="fas fa-cog w-6 mr-3 text-center"></i>Configurações</a></div></aside><main class="flex-1 flex flex-col overflow-hidden"><header class="h-16 flex items-center justify-between px-6 border-b border-inherit flex-shrink-0 bg-[var(--card-bg)]/80 backdrop-blur-sm"><h2 id="page-title" class="text-2xl font-bold"></h2><div class="flex items-center space-x-4"><button id="theme-toggle" class="text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-full w-10 h-10 flex items-center justify-center transition-colors"></button><div class="text-right"><div class="font-semibold text-sm">${user.name}</div><div class="text-xs text-text-secondary">${user.email}</div></div></div></header><div id="alert-container"></div><div id="page-content" class="flex-1 overflow-y-auto p-6 page-fade-in"></div></main></div>`,
         
         loadingDashboard: () => `<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">${this.templates.summaryCard("Carregando...", "...", "fa-spinner fa-spin")}${this.templates.summaryCard("...", "...", "fa-spinner fa-spin")}${this.templates.summaryCard("...", "...", "fa-spinner fa-spin")}${this.templates.summaryCard("...", "...", "fa-spinner fa-spin")}</div><div class="text-center p-16 text-text-secondary"><i class="fas fa-spinner fa-spin fa-2x"></i></div>`,
@@ -412,14 +412,14 @@ defineTemplates() {
         activityFeedItem: (item) => `<li class="flex items-center text-sm"><i class="fas ${item.ponto.saida ? 'fa-sign-out-alt text-red-500' : 'fa-sign-in-alt text-green-500'} w-4 mr-3 flex-shrink-0"></i><div class="flex-grow"><span class="font-semibold">${item.username}</span> ${item.ponto.saida ? 'encerrou o ponto' : 'iniciou um ponto'}.</div><span class="ml-auto text-xs text-text-secondary flex-shrink-0">${new Date(item.ponto.saida || item.ponto.entrada).toLocaleTimeString('pt-BR', {hour: '2-digit', minute: '2-digit'})}</span></li>`,
         summaryCard: (t, v, i, c = '') => `<div class="card rounded-xl p-5 shadow-lg border-0" style="background-color: var(--card-bg);"><div class="flex items-center"><div class="p-3 rounded-full bg-blue-500/10 text-blue-500 mr-4"><i class="fas ${i}"></i></div><div><h4 class="text-sm font-medium text-text-secondary">${t}</h4><p class="text-2xl font-bold mt-1 ${c}">${v}</p></div></div></div>`,
         
-        // TEMPLATE DA PÁGINA DE RELATÓRIOS (QUANDO UM USUÁRIO É SELECIONADO)
         reportsPage: (user) => `<div class="card rounded-xl shadow-lg border-0" style="background-color: var(--card-bg);"><div class="p-6 border-b border-inherit flex justify-between items-center flex-wrap gap-4"><div class="flex items-center gap-4"><button id="back-to-users-btn" class="text-text-secondary hover:text-blue-500 w-8 h-8 rounded-lg hover:bg-slate-500/10" title="Voltar para a lista"><i class="fas fa-arrow-left"></i></button><h3 class="text-xl font-bold">Relatório de: ${user.username}</h3></div><div class="flex gap-2"><button id="export-xlsx-btn" class="bg-green-600 text-white font-semibold rounded-lg h-9 px-4 text-sm flex items-center gap-2 hover:bg-green-700 transition-colors"><i class="fas fa-file-excel"></i>Excel</button><button id="export-pdf-btn" class="bg-red-600 text-white font-semibold rounded-lg h-9 px-4 text-sm flex items-center gap-2 hover:bg-red-700 transition-colors"><i class="fas fa-file-pdf"></i>PDF</button></div></div><div class="p-4 grid grid-cols-1 md:grid-cols-4 gap-4 items-end"><select id="status-filter-select" class="md:col-span-1 px-3 py-2 bg-slate-100 dark:bg-slate-800 border-transparent rounded-lg"><option value="">Todos Status</option><option value="completed">Completo</option><option value="pending">Pendente</option></select><input type="date" id="start-date-filter" class="md:col-span-1 px-3 py-2 bg-slate-100 dark:bg-slate-800 border-transparent rounded-lg"><input type="date" id="end-date-filter" class="md:col-span-1 px-3 py-2 bg-slate-100 dark:bg-slate-800 border-transparent rounded-lg"><button id="filter-btn" class="md-col-span-1 bg-blue-600 text-white font-semibold rounded-lg h-10 px-4 hover:bg-blue-700 transition-colors">Filtrar</button></div><div class="overflow-x-auto"><table class="min-w-full text-sm"><thead class="text-xs text-text-secondary uppercase bg-slate-50 dark:bg-slate-800/50"><tr><th class="px-6 py-3 text-left font-semibold">Entrada</th><th class="px-6 py-3 text-left font-semibold">Saída</th><th class="px-6 py-3 text-left font-semibold">Duração</th><th class="px-6 py-3 text-center font-semibold">Status</th><th class="px-6 py-3 text-center font-semibold">Ações</th></tr></thead><tbody id="reports-table-body" class="divide-y divide-inherit"></tbody></table></div></div>`,
         
-        // TEMPLATE DA LISTA DE USUÁRIOS PARA O RELATÓRIO
         reportUserListPage: (users) => `<div class="card rounded-xl shadow-lg border-0" style="background-color: var(--card-bg);"><div class="p-6 border-b border-inherit"><h3 class="text-xl font-bold">Relatórios</h3><p class="text-sm text-text-secondary">Selecione um agente para ver seus registros de ponto.</p></div><div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 p-6">${users.map(u => `<a href="#" class="user-report-link card p-4 flex items-center gap-3 rounded-lg hover:bg-blue-500/10 transition-colors" data-userid="${u.userId}" data-username="${u.username}"><i class="fas fa-user-circle text-2xl text-text-secondary"></i><span class="font-semibold">${u.username}</span></a>`).join('')}</div></div>`,
 
-        // TEMPLATE DA TABELA DE RELATÓRIO (COM DURAÇÃO FORMATADA)
         reportRow: (p, formatDuration) => { const iC = p.entrada && p.saida, d = iC ? (new Date(p.saida) - new Date(p.entrada)) : 0; return `<tr class="hover:bg-slate-50 dark:hover:bg-slate-800/60"><td class="p-4 px-6 text-text-secondary">${new Date(p.entrada).toLocaleString('pt-BR')}</td><td class="p-4 px-6 text-text-secondary">${p.saida ? new Date(p.saida).toLocaleString('pt-BR') : '<span class="italic text-slate-500">Em serviço...</span>'}</td><td class="p-4 px-6 font-semibold">${iC ? formatDuration(d) : '---'}</td><td class="p-4 px-6 text-center"><span class="px-2.5 py-0.5 text-xs font-semibold rounded-full ${iC ? 'bg-green-100 text-green-800 dark:bg-green-500/20 dark:text-green-300' : 'bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-300'}">${iC ? 'Completo' : 'Pendente'}</span></td><td class="p-4 px-6 text-center"><div class="flex justify-center gap-2">${!iC ? `<button data-id="${p._id}" class="force-logout-btn text-text-secondary hover:text-amber-500 w-8 h-8 rounded-lg hover:bg-slate-500/10" title="Forçar Saída"><i class="fas fa-clock"></i></button>` : ''}<button data-ponto='${JSON.stringify(p)}' class="edit-btn text-text-secondary hover:text-blue-500 w-8 h-8 rounded-lg hover:bg-slate-500/10" title="Editar"><i class="fas fa-pencil-alt"></i></button><button data-id="${p._id}" class="delete-btn text-text-secondary hover:text-red-500 w-8 h-8 rounded-lg hover:bg-slate-500/10" title="Excluir"><i class="fas fa-trash-alt"></i></button></div></td></tr>` },
+        
+        // NOVO TEMPLATE PARA A LINHA DA PLANILHA
+        spreadsheetRow: (p, formatDuration) => { const iC = p.entrada && p.saida, d = iC ? (new Date(p.saida) - new Date(p.entrada)) : 0; return `<tr class="hover:bg-slate-50 dark:hover:bg-slate-800/60"><td class="p-4 px-6 font-medium">${p.username}</td><td class="p-4 px-6 text-text-secondary">${new Date(p.entrada).toLocaleString('pt-BR')}</td><td class="p-4 px-6 text-text-secondary">${p.saida ? new Date(p.saida).toLocaleString('pt-BR') : '<span class="italic text-slate-500">Em serviço...</span>'}</td><td class="p-4 px-6 font-semibold">${iC ? formatDuration(d) : '---'}</td><td class="p-4 px-6 text-center"><span class="px-2.5 py-0.5 text-xs font-semibold rounded-full ${iC ? 'bg-green-100 text-green-800 dark:bg-green-500/20 dark:text-green-300' : 'bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-300'}">${iC ? 'Completo' : 'Pendente'}</span></td><td class="p-4 px-6 text-center"><div class="flex justify-center gap-2">${!iC ? `<button data-id="${p._id}" class="force-logout-btn text-text-secondary hover:text-amber-500 w-8 h-8 rounded-lg hover:bg-slate-500/10" title="Forçar Saída"><i class="fas fa-clock"></i></button>` : ''}<button data-ponto='${JSON.stringify(p)}' class="edit-btn text-text-secondary hover:text-blue-500 w-8 h-8 rounded-lg hover:bg-slate-500/10" title="Editar"><i class="fas fa-pencil-alt"></i></button><button data-id="${p._id}" class="delete-btn text-text-secondary hover:text-red-500 w-8 h-8 rounded-lg hover:bg-slate-500/10" title="Excluir"><i class="fas fa-trash-alt"></i></button></div></td></tr>` },
         
         spreadsheetPage: () => `<div class="card rounded-xl shadow-lg border-0" style="background-color: var(--card-bg);"><div class="p-6 border-b border-inherit flex justify-between items-center"><div><h3 class="text-xl font-bold">Planilha ao Vivo</h3><p class="text-sm text-text-secondary">Atualiza a cada 30 segundos.</p></div><i class="fas fa-wifi text-green-500"></i></div><div class="overflow-x-auto"><table class="min-w-full text-sm"><thead class="text-xs text-text-secondary uppercase bg-slate-50 dark:bg-slate-800/50"><tr><th class="px-6 py-3 text-left font-semibold">Usuário</th><th class="px-6 py-3 text-left font-semibold">Entrada</th><th class="px-6 py-3 text-left font-semibold">Saída</th><th class="px-6 py-3 text-left font-semibold">Duração</th><th class="px-6 py-3 text-center font-semibold">Status</th><th class="px-6 py-3 text-center font-semibold">Ações</th></tr></thead><tbody id="spreadsheet-table-body" class="divide-y divide-inherit"></tbody></table></div></div>`,
         settingsPage: () => `<div class="card rounded-xl p-6 shadow-lg border-0 max-w-2xl mx-auto" style="background-color: var(--card-bg);"><h3 class="text-xl font-bold mb-1">Configurações</h3><p class="text-sm text-text-secondary mb-6">Ajustes gerais do sistema.</p><div class="text-center p-8 border-2 border-dashed border-border-color rounded-lg text-text-secondary">Página de Configurações em construção.</div></div>`,
@@ -430,7 +430,6 @@ defineTemplates() {
         editModal: p => `<div class="fixed inset-0 z-50 modal-backdrop flex items-center justify-center p-4"><div class="card rounded-2xl shadow-2xl w-full max-w-md border-0 page-fade-in" style="background-color: var(--card-bg);"><form id="edit-form" class="p-6"><h3 class="text-xl font-bold mb-4">Editar Registro</h3><div class="space-y-4"><div><label class="block text-sm font-medium mb-1">Entrada</label><input type="datetime-local" name="entrada" class="w-full px-3 py-2 bg-slate-100 dark:bg-slate-800 rounded-lg" value="${new Date(new Date(p.entrada).getTime() - (new Date().getTimezoneOffset() * 60000)).toISOString().slice(0, 16)}" required></div><div><label class="block text-sm font-medium mb-1">Saída</label><input type="datetime-local" name="saida" class="w-full px-3 py-2 bg-slate-100 dark:bg-slate-800 rounded-lg" value="${p.saida ? new Date(new Date(p.saida).getTime() - (new Date().getTimezoneOffset() * 60000)).toISOString().slice(0, 16) : ''}" required></div></div><div class="flex justify-end gap-3 mt-6"><button type="button" class="modal-close-btn px-4 py-2 rounded-lg hover:bg-slate-500/10">Cancelar</button><button type="submit" class="bg-blue-600 text-white font-semibold rounded-lg px-5 py-2 hover:bg-blue-700 transition-all">Salvar</button></div></form></div></div>`,
         deleteModal: () => `<div class="fixed inset-0 z-50 modal-backdrop flex items-center justify-center p-4"><div class="card rounded-2xl shadow-2xl w-full max-w-sm border-0 p-6 text-center page-fade-in" style="background-color: var(--card-bg);"><i class="fas fa-exclamation-triangle text-4xl text-red-500 mb-4"></i><h3 class="text-xl font-bold mb-2">Excluir Registro?</h3><p class="text-text-secondary mb-6">Esta ação é irreversível.</p><div class="flex justify-center gap-3"><button class="modal-close-btn px-6 py-2 rounded-lg hover:bg-slate-500/10">Cancelar</button><button id="confirm-delete-btn" class="bg-red-600 text-white font-semibold rounded-lg px-6 py-2 hover:bg-red-700 transition-all">Excluir</button></div></div></div>`,
         
-        // TEMPLATES DA PÁGINA DE RANKING
         rankingPage: (weekly, monthly, formatDuration) => `
             <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
                 ${this.templates.rankingCard('Ranking Semanal', 'fa-calendar-week', weekly, formatDuration)}
@@ -458,7 +457,6 @@ defineTemplates() {
                 </li>`;
         },
 
-        // <-- TEMPLATES DOS MEMBROS (JÁ EXISTENTES, MANTIDOS) -->
         membersPage: (members) => `
             <div class="card rounded-xl shadow-lg border-0" style="background-color: var(--card-bg);">
                 <div class="p-6 border-b border-inherit flex flex-col md:flex-row justify-between items-center gap-4">
