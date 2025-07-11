@@ -49,7 +49,6 @@ app.use(rateLimit({ windowMs: 15 * 60 * 1000, max: 1000 }));
 // <-- ROTA DE MEMBROS ATUALIZADA COM FILTRO -->
 app.get('/api/members', async (req, res) => {
     try {
-        // Busca todos os membros que NÃO ESTÃO ($nin) na lista de ignorados e ordena por nome
         const members = await Member.find({ 
             discordUserId: { $nin: IGNORED_MEMBER_IDS_API } 
         }).sort({ username: 1 }).lean();
@@ -61,20 +60,50 @@ app.get('/api/members', async (req, res) => {
     }
 });
 
-// Rota para o Ranking
-app.get('/api/ranking', async (req, res) => {
-    const { period } = req.query; // 'weekly' or 'monthly'
-    let startDate;
-    const endDate = new Date();
+// FUNÇÃO HELPER PARA CALCULAR DATAS DA SEMANA
+const getWeekDateRange = (year, week) => {
+    const d = new Date(year, 0, 1 + (week - 1) * 7);
+    const day = d.getDay();
+    const diff = d.getDate() - day + (day === 0 ? -6 : 1); 
+    const monday = new Date(d.setDate(diff));
+    monday.setHours(0, 0, 0, 0);
+    const sunday = new Date(monday);
+    sunday.setDate(monday.getDate() + 6);
+    sunday.setHours(23, 59, 59, 999);
+    return { startDate: monday, endDate: sunday };
+}
 
-    if (period === 'monthly') {
-        startDate = new Date(endDate.getFullYear(), endDate.getMonth(), 1);
-    } else { // weekly by default
-        startDate = new Date();
-        startDate.setDate(startDate.getDate() - 7);
-    }
-    
+// ROTA DE RANKING ATUALIZADA COM FILTROS
+app.get('/api/ranking', async (req, res) => {
+    const { period, year, month, week } = req.query;
+    let startDate, endDate;
+    const currentYear = new Date().getFullYear();
+    const currentMonth = new Date().getMonth();
+
     try {
+        if (period === 'monthly') {
+            const y = parseInt(year) || currentYear;
+            const m = month ? parseInt(month) : currentMonth;
+            startDate = new Date(y, m, 1);
+            endDate = new Date(y, m + 1, 0);
+            endDate.setHours(23, 59, 59, 999);
+        } else { // weekly
+            const y = parseInt(year) || currentYear;
+            if (week) {
+                ({ startDate, endDate } = getWeekDateRange(y, parseInt(week)));
+            } else {
+                 // Default to current week
+                const today = new Date();
+                const dayOfWeek = today.getDay();
+                const diff = today.getDate() - dayOfWeek + (dayOfWeek === 0 ? -6 : 1);
+                startDate = new Date(today.setDate(diff));
+                startDate.setHours(0,0,0,0);
+                endDate = new Date(startDate);
+                endDate.setDate(startDate.getDate() + 6);
+                endDate.setHours(23, 59, 59, 999);
+            }
+        }
+
         const ranking = await Registro.aggregate([
             { $unwind: '$pontos' },
             { $match: { 
@@ -101,7 +130,7 @@ app.get('/api/ranking', async (req, res) => {
         ]);
         res.json({ success: true, ranking });
     } catch (error) {
-        console.error(`Erro ao gerar ranking ${period}:`, error);
+        console.error(`Erro ao gerar ranking:`, error);
         res.status(500).json({ success: false, message: 'Erro ao gerar ranking.'});
     }
 });

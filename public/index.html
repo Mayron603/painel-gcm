@@ -31,7 +31,19 @@
                 this.root = rootNode;
                 this.modalRoot = document.getElementById('modal-root');
                 this.toastRoot = document.getElementById('toast-root');
-                this.state = { user: null, theme: 'dark', timers: {}, charts: {}, selectedReportUser: null };
+                this.state = { 
+                    user: null, 
+                    theme: 'dark', 
+                    timers: {}, 
+                    charts: {}, 
+                    selectedReportUser: null,
+                    rankingFilters: { // NOVO ESTADO PARA FILTROS DE RANKING
+                        period: 'weekly',
+                        year: new Date().getFullYear(),
+                        month: new Date().getMonth(),
+                        week: this.getWeekNumber(new Date())
+                    }
+                };
 
                 this.defineApi();
                 this.defineTemplates();
@@ -74,7 +86,6 @@
 
             async navigateTo(page) {
                 this.clearTimers();
-                // Não reseta o usuário selecionado se a navegação for para a mesma página (ex: refresh com filtros)
                 if (!window.location.hash.includes(page)) {
                     this.state.selectedReportUser = null; 
                 }
@@ -112,10 +123,8 @@
                 }
             }
             
-            formatDuration(ms, format = 'full') {
+            formatDuration(ms) {
                 if (isNaN(ms) || ms < 0) return 'N/A';
-                if (format === 'hours') return `${(ms / 3600000).toFixed(2)}h`;
-
                 const hours = Math.floor(ms / 3600000);
                 const minutes = Math.floor((ms % 3600000) / 60000);
                 let result = '';
@@ -132,18 +141,51 @@
                     : '<p class="text-sm text-text-secondary text-center py-4">Nenhuma atividade recente.</p>';
             }
             
+            // PÁGINA DE RANKING ATUALIZADA
             async renderRankingPage(container) {
-                container.innerHTML = this.templates.loadingDashboard();
-                const [weeklyRes, monthlyRes] = await Promise.all([
-                    this.api.getRanking('weekly'),
-                    this.api.getRanking('monthly')
-                ]);
+                container.innerHTML = this.templates.rankingPage(this.state.rankingFilters, this.getWeekNumber, this.getWeekDateRange);
+                this.updateRankingView();
+                this.setupRankingListeners();
+            }
 
-                if (weeklyRes.success && monthlyRes.success) {
-                    container.innerHTML = this.templates.rankingPage(weeklyRes.ranking, monthlyRes.ranking, this.formatDuration);
+            async updateRankingView() {
+                const listContainer = this.root.querySelector('#ranking-list-container');
+                if (!listContainer) return;
+                listContainer.innerHTML = this.templates.loadingRow(3);
+
+                const params = new URLSearchParams(this.state.rankingFilters);
+                const res = await this.api.getRanking(params.toString());
+                
+                if (res.success) {
+                    listContainer.innerHTML = res.ranking.length > 0 
+                        ? res.ranking.map((item, index) => this.templates.rankingItem(item, index, this.formatDuration)).join('')
+                        : this.templates.emptyRow(3);
                 } else {
-                    container.innerHTML = this.templates.errorPage('Falha ao carregar rankings.');
+                    listContainer.innerHTML = this.templates.errorPage('Falha ao carregar ranking.');
                 }
+            }
+            
+            setupRankingListeners() {
+                const periodSelect = this.root.querySelector('#ranking-period-select');
+                const yearSelect = this.root.querySelector('#ranking-year-select');
+                const monthSelect = this.root.querySelector('#ranking-month-select');
+                const weekSelect = this.root.querySelector('#ranking-week-select');
+
+                const handleFilterChange = () => {
+                    this.state.rankingFilters.period = periodSelect.value;
+                    this.state.rankingFilters.year = parseInt(yearSelect.value);
+                    if (periodSelect.value === 'monthly') {
+                        this.state.rankingFilters.month = parseInt(monthSelect.value);
+                    } else {
+                        this.state.rankingFilters.week = parseInt(weekSelect.value);
+                    }
+                    this.renderRankingPage(this.root.querySelector('#page-content'));
+                };
+
+                periodSelect.addEventListener('change', handleFilterChange);
+                yearSelect.addEventListener('change', handleFilterChange);
+                monthSelect.addEventListener('change', handleFilterChange);
+                weekSelect.addEventListener('change', handleFilterChange);
             }
 
             async renderReportsPage(container) {
@@ -215,7 +257,6 @@
                 window.open(`/api/registros/export?${params.toString()}`, '_blank');
             }
 
-            // FUNÇÃO CORRIGIDA
             async renderReportTable(isSpreadsheet = false) {
                 const tableId = isSpreadsheet ? '#spreadsheet-table-body' : '#reports-table-body';
                 const tableBody = this.root.querySelector(tableId);
@@ -308,6 +349,26 @@
                 this.state.timers = {};
             }
 
+            // NOVAS FUNÇÕES HELPER PARA DATA E SEMANA
+            getWeekNumber(d) {
+                d = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+                d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay()||7));
+                var yearStart = new Date(Date.UTC(d.getUTCFullYear(),0,1));
+                var weekNo = Math.ceil((((d - yearStart) / 86400000) + 1)/7);
+                return weekNo;
+            }
+
+            getWeekDateRange(year, week) {
+                const d = new Date(year, 0, 1 + (week - 1) * 7);
+                const day = d.getDay();
+                const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+                const monday = new Date(d.setDate(diff));
+                const sunday = new Date(monday);
+                sunday.setDate(monday.getDate() + 6);
+                const formatDate = (date) => date.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+                return `${formatDate(monday)} - ${formatDate(sunday)}`;
+            }
+
             renderChart(type, data, selector) {
                 const ctx = this.root.querySelector(selector)?.getContext('2d');
                 if (!ctx) return;
@@ -315,20 +376,7 @@
                 const chartColors = { text: this.state.theme === 'dark' ? '#94a3b8' : '#475569', grid: this.state.theme === 'dark' ? '#1e293b' : '#e2e8f0', cardBg: this.state.theme === 'dark' ? '#0f172a' : '#ffffff' };
                 
                 if (type === 'hourly') {
-                    this.state.charts.hourly = new Chart(ctx, {
-                        type: 'bar',
-                        data: {
-                            labels: Array.from({length: 24}, (_, i) => `${i.toString().padStart(2, '0')}:00`),
-                            datasets: [{
-                                label: 'Registros por Hora',
-                                data: data,
-                                backgroundColor: 'rgba(96, 165, 250, 0.5)',
-                                borderColor: '#60a5fa',
-                                borderWidth: 1
-                            }]
-                        },
-                        options: { responsive: true, maintainAspectRatio: false, scales: { y: { beginAtZero: true, ticks: { color: chartColors.text, stepSize: 1 }, grid: { color: chartColors.grid } }, x: { ticks: { color: chartColors.text }, grid: { display: false } } }, plugins: { legend: { display: false } } }
-                    });
+                    this.state.charts.hourly = new Chart(ctx, { type: 'bar', data: { labels: Array.from({length: 24}, (_, i) => `${i.toString().padStart(2, '0')}:00`), datasets: [{ label: 'Registros por Hora', data: data, backgroundColor: 'rgba(96, 165, 250, 0.5)', borderColor: '#60a5fa', borderWidth: 1 }] }, options: { responsive: true, maintainAspectRatio: false, scales: { y: { beginAtZero: true, ticks: { color: chartColors.text, stepSize: 1 }, grid: { color: chartColors.grid } }, x: { ticks: { color: chartColors.text }, grid: { display: false } } }, plugins: { legend: { display: false } } } });
                 } else if (type === 'status') {
                     this.state.charts.status = new Chart(ctx, { type: 'doughnut', data: { labels: ['Fechados Hoje', 'Pendentes'], datasets: [{ data: [data.closedToday, data.pendingRegisters], backgroundColor: ['#22c55e', '#f59e0b'], borderColor: chartColors.cardBg, borderWidth: 5 }] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom', labels: { color: chartColors.text } } } } });
                 } else if (type === 'activity') {
@@ -390,7 +438,7 @@
                 this.api = {
                     fetch: async (endpoint, options = {}) => { try { const res = await fetch(`/api${endpoint}`, options); return res.json(); } catch (err) { return { success: false, message: 'Erro de rede.' }; } },
                     getDashboardSummary: () => this.api.fetch('/dashboard/summary'),
-                    getRanking: (period) => this.api.fetch(`/ranking?period=${period}`),
+                    getRanking: (params) => this.api.fetch(`/ranking?${params}`), // <-- API DO RANKING ATUALIZADA
                     getRegistros: (filters = {}) => { const params = new URLSearchParams(Object.fromEntries(Object.entries(filters).filter(([_, v]) => v != null && v !== ''))); return this.api.fetch(`/registros?${params}`); },
                     getUniqueUsers: () => this.api.fetch('/unique-users'),
                     getAlerts: () => this.api.fetch('/alerts'),
@@ -413,14 +461,9 @@ defineTemplates() {
         summaryCard: (t, v, i, c = '') => `<div class="card rounded-xl p-5 shadow-lg border-0" style="background-color: var(--card-bg);"><div class="flex items-center"><div class="p-3 rounded-full bg-blue-500/10 text-blue-500 mr-4"><i class="fas ${i}"></i></div><div><h4 class="text-sm font-medium text-text-secondary">${t}</h4><p class="text-2xl font-bold mt-1 ${c}">${v}</p></div></div></div>`,
         
         reportsPage: (user) => `<div class="card rounded-xl shadow-lg border-0" style="background-color: var(--card-bg);"><div class="p-6 border-b border-inherit flex justify-between items-center flex-wrap gap-4"><div class="flex items-center gap-4"><button id="back-to-users-btn" class="text-text-secondary hover:text-blue-500 w-8 h-8 rounded-lg hover:bg-slate-500/10" title="Voltar para a lista"><i class="fas fa-arrow-left"></i></button><h3 class="text-xl font-bold">Relatório de: ${user.username}</h3></div><div class="flex gap-2"><button id="export-xlsx-btn" class="bg-green-600 text-white font-semibold rounded-lg h-9 px-4 text-sm flex items-center gap-2 hover:bg-green-700 transition-colors"><i class="fas fa-file-excel"></i>Excel</button><button id="export-pdf-btn" class="bg-red-600 text-white font-semibold rounded-lg h-9 px-4 text-sm flex items-center gap-2 hover:bg-red-700 transition-colors"><i class="fas fa-file-pdf"></i>PDF</button></div></div><div class="p-4 grid grid-cols-1 md:grid-cols-4 gap-4 items-end"><select id="status-filter-select" class="md:col-span-1 px-3 py-2 bg-slate-100 dark:bg-slate-800 border-transparent rounded-lg"><option value="">Todos Status</option><option value="completed">Completo</option><option value="pending">Pendente</option></select><input type="date" id="start-date-filter" class="md:col-span-1 px-3 py-2 bg-slate-100 dark:bg-slate-800 border-transparent rounded-lg"><input type="date" id="end-date-filter" class="md:col-span-1 px-3 py-2 bg-slate-100 dark:bg-slate-800 border-transparent rounded-lg"><button id="filter-btn" class="md-col-span-1 bg-blue-600 text-white font-semibold rounded-lg h-10 px-4 hover:bg-blue-700 transition-colors">Filtrar</button></div><div class="overflow-x-auto"><table class="min-w-full text-sm"><thead class="text-xs text-text-secondary uppercase bg-slate-50 dark:bg-slate-800/50"><tr><th class="px-6 py-3 text-left font-semibold">Entrada</th><th class="px-6 py-3 text-left font-semibold">Saída</th><th class="px-6 py-3 text-left font-semibold">Duração</th><th class="px-6 py-3 text-center font-semibold">Status</th><th class="px-6 py-3 text-center font-semibold">Ações</th></tr></thead><tbody id="reports-table-body" class="divide-y divide-inherit"></tbody></table></div></div>`,
-        
         reportUserListPage: (users) => `<div class="card rounded-xl shadow-lg border-0" style="background-color: var(--card-bg);"><div class="p-6 border-b border-inherit"><h3 class="text-xl font-bold">Relatórios</h3><p class="text-sm text-text-secondary">Selecione um agente para ver seus registros de ponto.</p></div><div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 p-6">${users.map(u => `<a href="#" class="user-report-link card p-4 flex items-center gap-3 rounded-lg hover:bg-blue-500/10 transition-colors" data-userid="${u.userId}" data-username="${u.username}"><i class="fas fa-user-circle text-2xl text-text-secondary"></i><span class="font-semibold">${u.username}</span></a>`).join('')}</div></div>`,
-
         reportRow: (p, formatDuration) => { const iC = p.entrada && p.saida, d = iC ? (new Date(p.saida) - new Date(p.entrada)) : 0; return `<tr class="hover:bg-slate-50 dark:hover:bg-slate-800/60"><td class="p-4 px-6 text-text-secondary">${new Date(p.entrada).toLocaleString('pt-BR')}</td><td class="p-4 px-6 text-text-secondary">${p.saida ? new Date(p.saida).toLocaleString('pt-BR') : '<span class="italic text-slate-500">Em serviço...</span>'}</td><td class="p-4 px-6 font-semibold">${iC ? formatDuration(d) : '---'}</td><td class="p-4 px-6 text-center"><span class="px-2.5 py-0.5 text-xs font-semibold rounded-full ${iC ? 'bg-green-100 text-green-800 dark:bg-green-500/20 dark:text-green-300' : 'bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-300'}">${iC ? 'Completo' : 'Pendente'}</span></td><td class="p-4 px-6 text-center"><div class="flex justify-center gap-2">${!iC ? `<button data-id="${p._id}" class="force-logout-btn text-text-secondary hover:text-amber-500 w-8 h-8 rounded-lg hover:bg-slate-500/10" title="Forçar Saída"><i class="fas fa-clock"></i></button>` : ''}<button data-ponto='${JSON.stringify(p)}' class="edit-btn text-text-secondary hover:text-blue-500 w-8 h-8 rounded-lg hover:bg-slate-500/10" title="Editar"><i class="fas fa-pencil-alt"></i></button><button data-id="${p._id}" class="delete-btn text-text-secondary hover:text-red-500 w-8 h-8 rounded-lg hover:bg-slate-500/10" title="Excluir"><i class="fas fa-trash-alt"></i></button></div></td></tr>` },
-        
-        // NOVO TEMPLATE PARA A LINHA DA PLANILHA
         spreadsheetRow: (p, formatDuration) => { const iC = p.entrada && p.saida, d = iC ? (new Date(p.saida) - new Date(p.entrada)) : 0; return `<tr class="hover:bg-slate-50 dark:hover:bg-slate-800/60"><td class="p-4 px-6 font-medium">${p.username}</td><td class="p-4 px-6 text-text-secondary">${new Date(p.entrada).toLocaleString('pt-BR')}</td><td class="p-4 px-6 text-text-secondary">${p.saida ? new Date(p.saida).toLocaleString('pt-BR') : '<span class="italic text-slate-500">Em serviço...</span>'}</td><td class="p-4 px-6 font-semibold">${iC ? formatDuration(d) : '---'}</td><td class="p-4 px-6 text-center"><span class="px-2.5 py-0.5 text-xs font-semibold rounded-full ${iC ? 'bg-green-100 text-green-800 dark:bg-green-500/20 dark:text-green-300' : 'bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-300'}">${iC ? 'Completo' : 'Pendente'}</span></td><td class="p-4 px-6 text-center"><div class="flex justify-center gap-2">${!iC ? `<button data-id="${p._id}" class="force-logout-btn text-text-secondary hover:text-amber-500 w-8 h-8 rounded-lg hover:bg-slate-500/10" title="Forçar Saída"><i class="fas fa-clock"></i></button>` : ''}<button data-ponto='${JSON.stringify(p)}' class="edit-btn text-text-secondary hover:text-blue-500 w-8 h-8 rounded-lg hover:bg-slate-500/10" title="Editar"><i class="fas fa-pencil-alt"></i></button><button data-id="${p._id}" class="delete-btn text-text-secondary hover:text-red-500 w-8 h-8 rounded-lg hover:bg-slate-500/10" title="Excluir"><i class="fas fa-trash-alt"></i></button></div></td></tr>` },
-        
         spreadsheetPage: () => `<div class="card rounded-xl shadow-lg border-0" style="background-color: var(--card-bg);"><div class="p-6 border-b border-inherit flex justify-between items-center"><div><h3 class="text-xl font-bold">Planilha ao Vivo</h3><p class="text-sm text-text-secondary">Atualiza a cada 30 segundos.</p></div><i class="fas fa-wifi text-green-500"></i></div><div class="overflow-x-auto"><table class="min-w-full text-sm"><thead class="text-xs text-text-secondary uppercase bg-slate-50 dark:bg-slate-800/50"><tr><th class="px-6 py-3 text-left font-semibold">Usuário</th><th class="px-6 py-3 text-left font-semibold">Entrada</th><th class="px-6 py-3 text-left font-semibold">Saída</th><th class="px-6 py-3 text-left font-semibold">Duração</th><th class="px-6 py-3 text-center font-semibold">Status</th><th class="px-6 py-3 text-center font-semibold">Ações</th></tr></thead><tbody id="spreadsheet-table-body" class="divide-y divide-inherit"></tbody></table></div></div>`,
         settingsPage: () => `<div class="card rounded-xl p-6 shadow-lg border-0 max-w-2xl mx-auto" style="background-color: var(--card-bg);"><h3 class="text-xl font-bold mb-1">Configurações</h3><p class="text-sm text-text-secondary mb-6">Ajustes gerais do sistema.</p><div class="text-center p-8 border-2 border-dashed border-border-color rounded-lg text-text-secondary">Página de Configurações em construção.</div></div>`,
         errorPage: (message) => `<div class="text-center p-16"><i class="fas fa-exclamation-triangle text-4xl text-red-500 mb-4"></i><h1 class="text-2xl font-bold">Ocorreu um Erro</h1><p class="text-text-secondary">${message}</p></div>`,
@@ -430,31 +473,57 @@ defineTemplates() {
         editModal: p => `<div class="fixed inset-0 z-50 modal-backdrop flex items-center justify-center p-4"><div class="card rounded-2xl shadow-2xl w-full max-w-md border-0 page-fade-in" style="background-color: var(--card-bg);"><form id="edit-form" class="p-6"><h3 class="text-xl font-bold mb-4">Editar Registro</h3><div class="space-y-4"><div><label class="block text-sm font-medium mb-1">Entrada</label><input type="datetime-local" name="entrada" class="w-full px-3 py-2 bg-slate-100 dark:bg-slate-800 rounded-lg" value="${new Date(new Date(p.entrada).getTime() - (new Date().getTimezoneOffset() * 60000)).toISOString().slice(0, 16)}" required></div><div><label class="block text-sm font-medium mb-1">Saída</label><input type="datetime-local" name="saida" class="w-full px-3 py-2 bg-slate-100 dark:bg-slate-800 rounded-lg" value="${p.saida ? new Date(new Date(p.saida).getTime() - (new Date().getTimezoneOffset() * 60000)).toISOString().slice(0, 16) : ''}" required></div></div><div class="flex justify-end gap-3 mt-6"><button type="button" class="modal-close-btn px-4 py-2 rounded-lg hover:bg-slate-500/10">Cancelar</button><button type="submit" class="bg-blue-600 text-white font-semibold rounded-lg px-5 py-2 hover:bg-blue-700 transition-all">Salvar</button></div></form></div></div>`,
         deleteModal: () => `<div class="fixed inset-0 z-50 modal-backdrop flex items-center justify-center p-4"><div class="card rounded-2xl shadow-2xl w-full max-w-sm border-0 p-6 text-center page-fade-in" style="background-color: var(--card-bg);"><i class="fas fa-exclamation-triangle text-4xl text-red-500 mb-4"></i><h3 class="text-xl font-bold mb-2">Excluir Registro?</h3><p class="text-text-secondary mb-6">Esta ação é irreversível.</p><div class="flex justify-center gap-3"><button class="modal-close-btn px-6 py-2 rounded-lg hover:bg-slate-500/10">Cancelar</button><button id="confirm-delete-btn" class="bg-red-600 text-white font-semibold rounded-lg px-6 py-2 hover:bg-red-700 transition-all">Excluir</button></div></div></div>`,
         
-        rankingPage: (weekly, monthly, formatDuration) => `
-            <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                ${this.templates.rankingCard('Ranking Semanal', 'fa-calendar-week', weekly, formatDuration)}
-                ${this.templates.rankingCard('Ranking Mensal', 'fa-calendar-alt', monthly, formatDuration)}
-            </div>`,
-        rankingCard: (title, icon, rankingData, formatDuration) => `
+        // TEMPLATE DA PÁGINA DE RANKING COM FILTROS
+        rankingPage: (filters, getWeekNumber, getWeekDateRange) => {
+            const isWeekly = filters.period === 'weekly';
+            const years = Array.from({length: 5}, (_, i) => new Date().getFullYear() - i);
+            const months = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
+            const weeks = Array.from({length: 53}, (_, i) => i + 1);
+
+            return `
             <div class="card rounded-xl shadow-lg border-0" style="background-color: var(--card-bg);">
-                <div class="p-6 border-b border-inherit">
-                    <h3 class="text-xl font-bold flex items-center gap-3"><i class="fas ${icon}"></i>${title}</h3>
+                <div class="p-6 border-b border-inherit flex flex-col sm:flex-row justify-between items-center gap-4">
+                    <h3 class="text-xl font-bold flex items-center gap-3"><i class="fas fa-trophy"></i>Ranking de Atividade</h3>
+                    <div class="flex items-center gap-2 flex-wrap justify-center">
+                        <select id="ranking-period-select" class="px-3 py-2 bg-slate-100 dark:bg-slate-800 border-transparent rounded-lg">
+                            <option value="weekly" ${isWeekly ? 'selected' : ''}>Semanal</option>
+                            <option value="monthly" ${!isWeekly ? 'selected' : ''}>Mensal</option>
+                        </select>
+                        <select id="ranking-year-select" class="px-3 py-2 bg-slate-100 dark:bg-slate-800 border-transparent rounded-lg">
+                            ${years.map(y => `<option value="${y}" ${y === filters.year ? 'selected' : ''}>${y}</option>`).join('')}
+                        </select>
+                        <select id="ranking-month-select" class="px-3 py-2 bg-slate-100 dark:bg-slate-800 border-transparent rounded-lg" style="display: ${isWeekly ? 'none' : 'block'};">
+                            ${months.map((m, i) => `<option value="${i}" ${i === filters.month ? 'selected' : ''}>${m}</option>`).join('')}
+                        </select>
+                        <select id="ranking-week-select" class="px-3 py-2 bg-slate-100 dark:bg-slate-800 border-transparent rounded-lg" style="display: ${isWeekly ? 'block' : 'none'};">
+                            ${weeks.map(w => `<option value="${w}" ${w === filters.week ? 'selected' : ''}>Semana ${w} (${getWeekDateRange(filters.year, w)})</option>`).join('')}
+                        </select>
+                    </div>
                 </div>
-                <ul class="divide-y divide-inherit">
-                    ${rankingData.length > 0 ? rankingData.map((item, index) => this.templates.rankingItem(item, index, formatDuration)).join('') : '<li class="p-6 text-center text-text-secondary">Nenhum dado para exibir.</li>'}
-                </ul>
-            </div>`,
+                <div class="overflow-x-auto">
+                    <table class="min-w-full text-sm">
+                        <thead class="text-xs text-text-secondary uppercase bg-slate-50 dark:bg-slate-800/50">
+                            <tr>
+                                <th class="px-6 py-3 text-center font-semibold w-16">#</th>
+                                <th class="px-6 py-3 text-left font-semibold">Agente</th>
+                                <th class="px-6 py-3 text-right font-semibold">Tempo Total</th>
+                            </tr>
+                        </thead>
+                        <tbody id="ranking-list-container" class="divide-y divide-inherit">
+                        </tbody>
+                    </table>
+                </div>
+            </div>`;
+        },
         rankingItem: (item, index, formatDuration) => {
             const colors = ['text-amber-400', 'text-slate-400', 'text-amber-600'];
             const icon = index < 3 ? `<i class="fas fa-trophy ${colors[index]}"></i>` : `<span class="font-semibold text-text-secondary">${index + 1}</span>`;
             return `
-                <li class="p-4 flex items-center justify-between hover:bg-slate-500/10">
-                    <div class="flex items-center gap-4">
-                        <div class="w-6 text-center text-lg">${icon}</div>
-                        <span class="font-semibold">${item.username}</span>
-                    </div>
-                    <span class="font-bold text-blue-500">${formatDuration(item.totalDuration)}</span>
-                </li>`;
+                <tr class="hover:bg-slate-500/10">
+                    <td class="p-4 text-center text-lg">${icon}</td>
+                    <td class="p-4 px-6 font-semibold">${item.username}</td>
+                    <td class="p-4 px-6 text-right font-bold text-blue-500">${formatDuration(item.totalDuration)}</td>
+                </tr>`;
         },
 
         membersPage: (members) => `
