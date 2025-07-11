@@ -24,7 +24,16 @@ const memberSchema = new mongoose.Schema({
     avatarUrl: {
         type: String
     },
-    roles: [roleSchema]
+    roles: [roleSchema],
+    // NOVO CAMPO DE OBSERVAÇÕES
+    observations: {
+        type: [{
+            text: String,
+            date: { type: Date, default: Date.now },
+            author: String 
+        }],
+        default: []
+    }
 }, { timestamps: true });
 
 module.exports = mongoose.model('Member', memberSchema);

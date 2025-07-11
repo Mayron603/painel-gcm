@@ -71,6 +71,53 @@ const getWeekDateRange = (year, week) => {
     return { startDate: monday, endDate: sunday };
 }
 
+// ROTA PARA BUSCAR DETALHES DE UM MEMBRO
+app.get('/api/members/:discordUserId', async (req, res) => {
+    try {
+        const { discordUserId } = req.params;
+        const member = await Member.findOne({ discordUserId }).lean();
+        if (!member) {
+            return res.status(404).json({ success: false, message: 'Membro não encontrado.' });
+        }
+        // Ordena as observações da mais recente para a mais antiga
+        if (member.observations) {
+            member.observations.sort((a, b) => new Date(b.date) - new Date(a.date));
+        }
+        res.json({ success: true, member });
+    } catch (error) {
+        console.error("Erro ao buscar membro:", error);
+        res.status(500).json({ success: false, message: 'Erro ao buscar membro.' });
+    }
+});
+
+// ROTA PARA ADICIONAR UMA OBSERVAÇÃO
+app.post('/api/members/:discordUserId/observations', async (req, res) => {
+    try {
+        const { discordUserId } = req.params;
+        const { text, author } = req.body;
+
+        if (!text || !author) {
+            return res.status(400).json({ success: false, message: 'O texto da observação e o autor são obrigatórios.' });
+        }
+
+        const observation = { text, author, date: new Date() };
+
+        const result = await Member.updateOne(
+            { discordUserId: discordUserId },
+            { $push: { observations: observation } }
+        );
+
+        if (result.modifiedCount === 0) {
+            return res.status(404).json({ success: false, message: "Membro não encontrado ou falha ao salvar." });
+        }
+
+        res.json({ success: true, message: "Observação adicionada com sucesso!", observation });
+    } catch (error) {
+        console.error("Erro ao adicionar observação:", error);
+        res.status(500).json({ success: false, message: 'Erro interno ao adicionar observação.' });
+    }
+});
+
 app.get('/api/ranking', async (req, res) => {
     const { period, year, month, week } = req.query;
     let startDate, endDate;
