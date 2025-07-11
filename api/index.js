@@ -46,7 +46,6 @@ app.use(express.json());
 app.use(rateLimit({ windowMs: 15 * 60 * 1000, max: 1000 }));
 
 
-// <-- ROTA DE MEMBROS ATUALIZADA COM FILTRO -->
 app.get('/api/members', async (req, res) => {
     try {
         const members = await Member.find({ 
@@ -60,7 +59,6 @@ app.get('/api/members', async (req, res) => {
     }
 });
 
-// FUNÇÃO HELPER PARA CALCULAR DATAS DA SEMANA
 const getWeekDateRange = (year, week) => {
     const d = new Date(year, 0, 1 + (week - 1) * 7);
     const day = d.getDay();
@@ -73,7 +71,6 @@ const getWeekDateRange = (year, week) => {
     return { startDate: monday, endDate: sunday };
 }
 
-// ROTA DE RANKING ATUALIZADA COM FILTROS
 app.get('/api/ranking', async (req, res) => {
     const { period, year, month, week } = req.query;
     let startDate, endDate;
@@ -92,7 +89,6 @@ app.get('/api/ranking', async (req, res) => {
             if (week) {
                 ({ startDate, endDate } = getWeekDateRange(y, parseInt(week)));
             } else {
-                 // Default to current week
                 const today = new Date();
                 const dayOfWeek = today.getDay();
                 const diff = today.getDate() - dayOfWeek + (dayOfWeek === 0 ? -6 : 1);
@@ -135,30 +131,55 @@ app.get('/api/ranking', async (req, res) => {
     }
 });
 
-
-// Rotas públicas
+// ROTA DE REGISTROS ATUALIZADA PARA CALCULAR HORAS TOTAIS
 app.get('/api/registros', async (req, res) => {
     const { userId, status, startDate, endDate } = req.query;
     let matchConditions = {};
     if (userId) matchConditions.userId = userId;
-    const registros = await Registro.find(matchConditions).lean();
-    const filteredRegistros = registros.map(reg => {
-        reg.pontos = reg.pontos.filter(ponto => {
-            let isValid = true;
-            if (status === 'pending' && ponto.saida !== null) isValid = false;
-            if (status === 'completed' && ponto.saida === null) isValid = false;
-            if (startDate && new Date(ponto.entrada) < new Date(startDate)) isValid = false;
-            if (endDate) {
-                const end = new Date(endDate);
-                end.setHours(23, 59, 59, 999);
-                if (new Date(ponto.entrada) > end) isValid = false;
+
+    try {
+        const registros = await Registro.find(matchConditions).lean();
+
+        let totalDuration = 0;
+        const finalRegistros = [];
+
+        registros.forEach(reg => {
+            const filteredPontos = reg.pontos.filter(ponto => {
+                let isValid = true;
+                if (status === 'pending' && ponto.saida !== null) isValid = false;
+                if (status === 'completed' && ponto.saida === null) isValid = false;
+                
+                // Converte as datas de filtro apenas uma vez
+                const startFilterDate = startDate ? new Date(startDate) : null;
+                const endFilterDate = endDate ? new Date(endDate) : null;
+                if(endFilterDate) endFilterDate.setHours(23, 59, 59, 999);
+
+                const pontoEntrada = new Date(ponto.entrada);
+
+                if (startFilterDate && pontoEntrada < startFilterDate) isValid = false;
+                if (endFilterDate && pontoEntrada > endFilterDate) isValid = false;
+                
+                return isValid;
+            });
+
+            if (filteredPontos.length > 0) {
+                // Calcula a duração total apenas para os pontos que passaram pelo filtro
+                filteredPontos.forEach(p => {
+                    if (p.saida) {
+                        totalDuration += (new Date(p.saida) - new Date(p.entrada));
+                    }
+                });
+                finalRegistros.push({ ...reg, pontos: filteredPontos });
             }
-            return isValid;
         });
-        return reg;
-    }).filter(reg => reg.pontos.length > 0);
-    res.json({ success: true, registros: filteredRegistros });
+
+        res.json({ success: true, registros: finalRegistros, totalDuration });
+    } catch (error) {
+        console.error("Erro ao buscar registros:", error);
+        res.status(500).json({ success: false, message: 'Erro ao buscar registros.' });
+    }
 });
+
 
 app.get('/api/unique-users', async (req, res) => {
     const users = await Registro.aggregate([
@@ -293,8 +314,6 @@ app.get('/api/registros/export', async (req, res) => {
         res.status(400).send('Formato inválido.');
     }
 });
-
-// ROTA DE FORÇAR SAÍDA REMOVIDA
 
 app.put('/api/registros/:pontoId', async (req, res) => {
     const { pontoId } = req.params;
