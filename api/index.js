@@ -61,6 +61,52 @@ app.get('/api/members', async (req, res) => {
     }
 });
 
+// Rota para o Ranking
+app.get('/api/ranking', async (req, res) => {
+    const { period } = req.query; // 'weekly' or 'monthly'
+    let startDate;
+    const endDate = new Date();
+
+    if (period === 'monthly') {
+        startDate = new Date(endDate.getFullYear(), endDate.getMonth(), 1);
+    } else { // weekly by default
+        startDate = new Date();
+        startDate.setDate(startDate.getDate() - 7);
+    }
+    
+    try {
+        const ranking = await Registro.aggregate([
+            { $unwind: '$pontos' },
+            { $match: { 
+                'pontos.saida': { $ne: null },
+                'pontos.entrada': { $gte: startDate, $lte: endDate }
+            }},
+            { $project: {
+                userId: 1,
+                username: 1,
+                duration: { $subtract: ['$pontos.saida', '$pontos.entrada'] }
+            }},
+            { $group: {
+                _id: { userId: '$userId', username: '$username' },
+                totalDuration: { $sum: '$duration' }
+            }},
+            { $sort: { totalDuration: -1 }},
+            { $limit: 20 },
+            { $project: {
+                _id: 0,
+                userId: '$_id.userId',
+                username: '$_id.username',
+                totalDuration: 1
+            }}
+        ]);
+        res.json({ success: true, ranking });
+    } catch (error) {
+        console.error(`Erro ao gerar ranking ${period}:`, error);
+        res.status(500).json({ success: false, message: 'Erro ao gerar ranking.'});
+    }
+});
+
+
 // Rotas públicas
 app.get('/api/registros', async (req, res) => {
     const { userId, status, startDate, endDate } = req.query;
