@@ -45,13 +45,52 @@ app.use(helmet({ contentSecurityPolicy: false }));
 app.use(express.json());
 app.use(rateLimit({ windowMs: 15 * 60 * 1000, max: 1000 }));
 
+// HIERARQUIA DE CARGOS (Do maior para o menor)
+const roleHierarchy = [
+    'Inspetor Superintendente',
+    'Inspetor de Agrupamento',
+    'Inspetor de Divisão',
+    'Inspetor',
+    'Subinspetor',
+    'Classe Distinta',
+    'Classe Especial',
+    'Agente de 1ª Classe',
+    'Agente de 2ª Classe',
+    'Agente de 3ª Classe',
+    'Estágio'
+];
+
+// Função auxiliar para obter o nível hierárquico de um membro
+const getRoleLevel = (member) => {
+    let level = Infinity; // Padrão para quem não tem cargo na hierarquia
+    const memberRoles = member.roles.map(r => r.name);
+    for (const role of memberRoles) {
+        const roleIndex = roleHierarchy.indexOf(role);
+        if (roleIndex !== -1 && roleIndex < level) {
+            level = roleIndex;
+        }
+    }
+    return level;
+};
 
 app.get('/api/members', async (req, res) => {
     try {
         const members = await Member.find({ 
             discordUserId: { $nin: IGNORED_MEMBER_IDS_API } 
-        }).sort({ username: 1 }).lean();
+        }).lean();
         
+        // Ordenação customizada pela hierarquia
+        members.sort((a, b) => {
+            const levelA = getRoleLevel(a);
+            const levelB = getRoleLevel(b);
+
+            if (levelA !== levelB) {
+                return levelA - levelB;
+            }
+            // Se os níveis forem iguais, ordena por nome de usuário
+            return a.username.localeCompare(b.username);
+        });
+
         res.json({ success: true, members });
     } catch (error) {
         console.error("Erro ao buscar membros:", error);
