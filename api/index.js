@@ -384,6 +384,89 @@ app.delete('/api/registros/:pontoId', async (req, res) => {
     res.json({ success: true, message: "Registro excluído com sucesso!" });
 });
 
+// ROTA PARA BUSCAR ESTATÍSTICAS DE DESEMPENHO DE UM MEMBRO
+app.get('/api/members/:discordUserId/stats', async (req, res) => {
+    try {
+        const { discordUserId } = req.params;
+        const now = new Date();
+        const firstDayOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+        const ninetyDaysAgo = new Date(new Date().setDate(now.getDate() - 90));
+
+        // Busca todos os pontos do usuário nos últimos 90 dias
+        const userPontos = await Registro.aggregate([
+            { $match: { userId: discordUserId } },
+            { $unwind: '$pontos' },
+            { $match: { 'pontos.saida': { $ne: null }, 'pontos.entrada': { $gte: ninetyDaysAgo } } },
+            { $project: { entrada: '$pontos.entrada', saida: '$pontos.saida' } }
+        ]);
+
+        if (userPontos.length === 0) {
+            return res.json({
+                success: true,
+                stats: {
+                    averageDuration: 0,
+                    totalHoursThisMonth: 0,
+                    teamAverageHoursThisMonth: 0,
+                    activityHeatmap: Array(7).fill(Array(24).fill(0))
+                }
+            });
+        }
+
+        let totalDurationMs = 0;
+        let totalHoursThisMonthMs = 0;
+        
+        // Inicializa o heatmap [diaDaSemana][hora]
+        const activityHeatmap = Array.from({ length: 7 }, () => Array(24).fill(0));
+
+        userPontos.forEach(ponto => {
+            const duration = ponto.saida.getTime() - ponto.entrada.getTime();
+            totalDurationMs += duration;
+
+            if (ponto.entrada >= firstDayOfMonth) {
+                totalHoursThisMonthMs += duration;
+            }
+
+            // Popula o heatmap
+            const entryDate = new Date(ponto.entrada);
+            const dayOfWeek = entryDate.getDay(); // Domingo = 0, Sábado = 6
+            const hour = entryDate.getHours();
+            activityHeatmap[dayOfWeek][hour]++;
+        });
+
+        // Calcula a média de todos os usuários no mês atual para comparação
+        const teamTotalHoursResult = await Registro.aggregate([
+            { $unwind: '$pontos' },
+            { $match: { 'pontos.saida': { $ne: null }, 'pontos.entrada': { $gte: firstDayOfMonth } } },
+            { $group: {
+                _id: null,
+                totalDuration: { $sum: { $subtract: ['$pontos.saida', '$pontos.entrada'] } },
+                uniqueUsers: { $addToSet: '$userId' }
+            }}
+        ]);
+        
+        let teamAverageHoursThisMonth = 0;
+        if (teamTotalHoursResult.length > 0) {
+            const { totalDuration, uniqueUsers } = teamTotalHoursResult[0];
+            const totalTeamUsers = uniqueUsers.length;
+            if(totalTeamUsers > 0) {
+               teamAverageHoursThisMonth = (totalDuration / totalTeamUsers) / 3600000;
+            }
+        }
+        
+        const stats = {
+            averageDuration: userPontos.length > 0 ? (totalDurationMs / userPontos.length) : 0,
+            totalHoursThisMonth: totalHoursThisMonthMs / 3600000,
+            teamAverageHoursThisMonth,
+            activityHeatmap
+        };
+
+        res.json({ success: true, stats });
+    } catch (error) {
+        console.error("Erro ao gerar estatísticas do membro:", error);
+        res.status(500).json({ success: false, message: 'Erro ao gerar estatísticas.' });
+    }
+});
+
 // Handler final (para Vercel)
 const handler = async (req, res) => {
   try {
