@@ -137,6 +137,29 @@
                 return result.trim() || '0m';
             }
 
+            // NOVA FUNÇÃO PARA GERAR A DESCRIÇÃO DO PERÍODO
+            getPeriodDescription(startDate, endDate) {
+                const formatDate = (dateString) => {
+                    if (!dateString) return '';
+                    const [year, month, day] = dateString.split('-');
+                    return `${day}/${month}/${year}`;
+                };
+
+                if (startDate && endDate) {
+                    if (startDate === endDate) {
+                        return `no dia ${formatDate(startDate)}`;
+                    }
+                    return `de ${formatDate(startDate)} a ${formatDate(endDate)}`;
+                }
+                if (startDate) {
+                    return `a partir de ${formatDate(startDate)}`;
+                }
+                if (endDate) {
+                    return `até ${formatDate(endDate)}`;
+                }
+                return 'de todo o período';
+            }
+
             renderActivityFeed(feedItems) {
                 const feedContainer = this.root.querySelector('#activity-feed');
                 if (!feedContainer || !feedItems) return;
@@ -316,8 +339,9 @@
                     if (!isSpreadsheet) {
                         const totalHoursEl = this.root.querySelector('#report-total-hours');
                         if (totalHoursEl) {
-                            totalHoursEl.innerHTML = `Tempo Total no Período: <span class="text-blue-500 font-bold">${this.formatDuration(data.totalDuration)}</span>`;
-                            // CORREÇÃO AQUI: Mostra o total sempre que houver duração
+                            // LÓGICA ATUALIZADA AQUI
+                            const periodDescription = this.getPeriodDescription(filters.startDate, filters.endDate);
+                            totalHoursEl.innerHTML = `Tempo Total ${periodDescription}: <span class="text-blue-500 font-bold">${this.formatDuration(data.totalDuration)}</span>`;
                             totalHoursEl.style.display = data.totalDuration > 0 ? 'block' : 'none';
                         }
                     }
