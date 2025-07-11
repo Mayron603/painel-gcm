@@ -46,7 +46,6 @@ app.use(express.json());
 app.use(rateLimit({ windowMs: 15 * 60 * 1000, max: 1000 }));
 
 // HIERARQUIA DE CARGOS (Do maior para o menor)
-// ATENÇÃO: Os nomes aqui devem ser EXATAMENTE iguais aos nomes dos cargos no Discord.
 const roleHierarchy = [
     'Inspetor Superintendente',
     'Inspetor de Agrupamento',
@@ -61,32 +60,32 @@ const roleHierarchy = [
     'Estágio'
 ];
 
-// Função auxiliar para obter o nível hierárquico de um membro
+// Função auxiliar para obter o nível hierárquico de um membro (VERSÃO CORRIGIDA)
 const getRoleLevel = (member) => {
     let level = Infinity; 
-    let highestRole = 'Nenhum';
     const memberRoles = member.roles.map(r => r.name);
 
-    for (const role of memberRoles) {
-        const roleIndex = roleHierarchy.indexOf(role);
-        if (roleIndex !== -1 && roleIndex < level) {
-            level = roleIndex;
-            highestRole = role;
+    // Itera sobre os cargos do membro
+    for (const memberRole of memberRoles) {
+        // Itera sobre a hierarquia para ver se o nome do cargo do membro contém um dos nomes da hierarquia
+        for (let i = 0; i < roleHierarchy.length; i++) {
+            const hierarchyRole = roleHierarchy[i];
+            if (memberRole.includes(hierarchyRole)) {
+                // Se encontrar uma correspondência, e se for um nível mais alto (índice menor), atualiza
+                if (i < level) {
+                    level = i;
+                }
+            }
         }
     }
-    // LOG DE DEPURAÇÃO: Mostra o nível calculado para cada membro
-    console.log(`[DEPURAÇÃO] Membro: ${member.username} | Cargos: [${memberRoles.join(', ')}] | Cargo Mais Alto: ${highestRole} | Nível de Ordenação: ${level}`);
     return level;
 };
 
 app.get('/api/members', async (req, res) => {
     try {
-        console.log("\n--- [DEPURAÇÃO] A INICIAR PEDIDO /api/members ---");
         const members = await Member.find({ 
             discordUserId: { $nin: IGNORED_MEMBER_IDS_API } 
         }).lean();
-        
-        console.log(`[DEPURAÇÃO] Foram encontrados ${members.length} membros. A calcular níveis de hierarquia...`);
         
         // Ordenação customizada pela hierarquia
         members.sort((a, b) => {
@@ -96,11 +95,9 @@ app.get('/api/members', async (req, res) => {
             if (levelA !== levelB) {
                 return levelA - levelB;
             }
+            // Se os níveis forem iguais, ordena por nome de usuário
             return a.username.localeCompare(b.username);
         });
-        
-        console.log("[DEPURAÇÃO] Ordenação concluída. A enviar resposta.");
-        console.log("--- [DEPURAÇÃO] FIM DO PEDIDO /api/members ---\n");
 
         res.json({ success: true, members });
     } catch (error) {
