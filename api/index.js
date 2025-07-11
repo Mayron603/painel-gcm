@@ -294,16 +294,7 @@ app.get('/api/registros/export', async (req, res) => {
     }
 });
 
-app.post('/api/registros/force-logout/:pontoId', async (req, res) => {
-    const { pontoId } = req.params;
-    const registro = await Registro.findOne({ "pontos._id": pontoId });
-    if (!registro) return res.status(404).json({ success: false, message: "Registro não encontrado." });
-    const ponto = registro.pontos.id(pontoId);
-    if (ponto.saida) return res.status(400).json({ success: false, message: "Este ponto já está encerrado." });
-    ponto.saida = new Date();
-    await registro.save();
-    res.json({ success: true, message: "Ponto encerrado com sucesso!" });
-});
+// ROTA DE FORÇAR SAÍDA REMOVIDA
 
 app.put('/api/registros/:pontoId', async (req, res) => {
     const { pontoId } = req.params;
