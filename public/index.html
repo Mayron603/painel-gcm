@@ -18,6 +18,7 @@
         .nav-link.active { background-color: var(--accent-color) !important; color: var(--accent-text) !important; font-weight: 600; }
         .modal-backdrop { background-color: rgba(2, 6, 23, 0.7); backdrop-filter: blur(4px); }
         input, select { color: var(--text-primary); }
+        .quick-filter-btn.active { background-color: var(--accent-color); color: var(--accent-text); }
     </style>
 </head>
 <body class="min-h-screen antialiased">
@@ -37,6 +38,7 @@
                     timers: {}, 
                     charts: {}, 
                     selectedReportUser: null,
+                    activeReportFilter: null, // 'today', 'week', 'month' or null
                     rankingFilters: {
                         period: 'weekly',
                         year: new Date().getFullYear(),
@@ -137,27 +139,26 @@
                 return result.trim() || '0m';
             }
 
-            // NOVA FUNÇÃO PARA GERAR A DESCRIÇÃO DO PERÍODO
-            getPeriodDescription(startDate, endDate) {
+            getPeriodDescription(activeFilter, startDate, endDate) {
                 const formatDate = (dateString) => {
                     if (!dateString) return '';
                     const [year, month, day] = dateString.split('-');
                     return `${day}/${month}/${year}`;
                 };
 
-                if (startDate && endDate) {
-                    if (startDate === endDate) {
-                        return `no dia ${formatDate(startDate)}`;
-                    }
-                    return `de ${formatDate(startDate)} a ${formatDate(endDate)}`;
+                switch(activeFilter) {
+                    case 'today': return 'de Hoje';
+                    case 'week': return 'desta Semana';
+                    case 'month': return 'deste Mês';
+                    default:
+                        if (startDate && endDate) {
+                            if (startDate === endDate) return `do dia ${formatDate(startDate)}`;
+                            return `de ${formatDate(startDate)} a ${formatDate(endDate)}`;
+                        }
+                        if (startDate) return `a partir de ${formatDate(startDate)}`;
+                        if (endDate) return `até ${formatDate(endDate)}`;
+                        return 'de todo o período';
                 }
-                if (startDate) {
-                    return `a partir de ${formatDate(startDate)}`;
-                }
-                if (endDate) {
-                    return `até ${formatDate(endDate)}`;
-                }
-                return 'de todo o período';
             }
 
             renderActivityFeed(feedItems) {
@@ -239,17 +240,85 @@
             }
 
             async renderReportForUser(container, user) {
-                container.innerHTML = this.templates.reportsPage(user);
+                container.innerHTML = this.templates.reportsPage(user, this.state.activeReportFilter);
                 
-                this.root.querySelector('#filter-btn').addEventListener('click', () => this.renderReportTable(false));
+                this.setupReportListeners();
+                await this.renderReportTable(false);
+            }
+            
+            setupReportListeners() {
+                this.root.querySelector('#filter-btn').addEventListener('click', () => {
+                    this.state.activeReportFilter = null; // Desativa o filtro rápido se o manual for usado
+                    this.updateQuickFilterButtons();
+                    this.renderReportTable(false);
+                });
                 this.root.querySelector('#export-xlsx-btn').addEventListener('click', () => this.exportReport('xlsx'));
                 this.root.querySelector('#export-pdf-btn').addEventListener('click', () => this.exportReport('pdf'));
                 this.root.querySelector('#back-to-users-btn').addEventListener('click', () => {
                     this.state.selectedReportUser = null;
-                    this.renderReportsPage(container);
+                    this.renderReportsPage(this.root.querySelector('#page-content'));
                 });
-                
-                await this.renderReportTable(false);
+
+                // Listeners para os botões de filtro rápido
+                const todayBtn = this.root.querySelector('#qf-today');
+                const weekBtn = this.root.querySelector('#qf-week');
+                const monthBtn = this.root.querySelector('#qf-month');
+                const startDateInput = this.root.querySelector('#start-date-filter');
+                const endDateInput = this.root.querySelector('#end-date-filter');
+
+                const toISODateString = (date) => date.toISOString().split('T')[0];
+
+                todayBtn.addEventListener('click', () => {
+                    const today = toISODateString(new Date());
+                    startDateInput.value = today;
+                    endDateInput.value = today;
+                    this.state.activeReportFilter = 'today';
+                    this.updateQuickFilterButtons();
+                    this.renderReportTable(false);
+                });
+
+                weekBtn.addEventListener('click', () => {
+                    const today = new Date();
+                    const dayOfWeek = today.getDay();
+                    const diff = today.getDate() - dayOfWeek + (dayOfWeek === 0 ? -6 : 1);
+                    const monday = new Date(today.setDate(diff));
+                    const sunday = new Date(monday);
+                    sunday.setDate(monday.getDate() + 6);
+                    
+                    startDateInput.value = toISODateString(monday);
+                    endDateInput.value = toISODateString(sunday);
+                    this.state.activeReportFilter = 'week';
+                    this.updateQuickFilterButtons();
+                    this.renderReportTable(false);
+                });
+
+                monthBtn.addEventListener('click', () => {
+                    const today = new Date();
+                    const firstDay = new Date(today.getFullYear(), today.getMonth(), 1);
+                    const lastDay = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+
+                    startDateInput.value = toISODateString(firstDay);
+                    endDateInput.value = toISODateString(lastDay);
+                    this.state.activeReportFilter = 'month';
+                    this.updateQuickFilterButtons();
+                    this.renderReportTable(false);
+                });
+
+                // Desativa o filtro rápido se o usuário mudar a data manualmente
+                startDateInput.addEventListener('change', () => {
+                    this.state.activeReportFilter = null;
+                    this.updateQuickFilterButtons();
+                });
+                endDateInput.addEventListener('change', () => {
+                    this.state.activeReportFilter = null;
+                    this.updateQuickFilterButtons();
+                });
+            }
+            
+            updateQuickFilterButtons() {
+                this.root.querySelectorAll('.quick-filter-btn').forEach(btn => {
+                    btn.classList.toggle('active', btn.dataset.filter === this.state.activeReportFilter);
+                });
             }
 
             async renderMembersPage(container) {
@@ -339,10 +408,9 @@
                     if (!isSpreadsheet) {
                         const totalHoursEl = this.root.querySelector('#report-total-hours');
                         if (totalHoursEl) {
-                            // LÓGICA ATUALIZADA AQUI
-                            const periodDescription = this.getPeriodDescription(filters.startDate, filters.endDate);
+                            const periodDescription = this.getPeriodDescription(this.state.activeReportFilter, filters.startDate, filters.endDate);
                             totalHoursEl.innerHTML = `Tempo Total ${periodDescription}: <span class="text-blue-500 font-bold">${this.formatDuration(data.totalDuration)}</span>`;
-                            totalHoursEl.style.display = data.totalDuration > 0 ? 'block' : 'none';
+                            totalHoursEl.style.display = data.registros.length > 0 ? 'block' : 'none';
                         }
                     }
                 } else {
@@ -532,7 +600,7 @@ defineTemplates() {
         activityFeedItem: (item) => `<li class="flex items-center text-sm"><i class="fas ${item.ponto.saida ? 'fa-sign-out-alt text-red-500' : 'fa-sign-in-alt text-green-500'} w-4 mr-3 flex-shrink-0"></i><div class="flex-grow"><span class="font-semibold">${item.username}</span> ${item.ponto.saida ? 'encerrou o ponto' : 'iniciou um ponto'}.</div><span class="ml-auto text-xs text-text-secondary flex-shrink-0">${new Date(item.ponto.saida || item.ponto.entrada).toLocaleTimeString('pt-BR', {hour: '2-digit', minute: '2-digit'})}</span></li>`,
         summaryCard: (t, v, i, c = '') => `<div class="card rounded-xl p-5 shadow-lg border-0" style="background-color: var(--card-bg);"><div class="flex items-center"><div class="p-3 rounded-full bg-blue-500/10 text-blue-500 mr-4"><i class="fas ${i}"></i></div><div><h4 class="text-sm font-medium text-text-secondary">${t}</h4><p class="text-2xl font-bold mt-1 ${c}">${v}</p></div></div></div>`,
         
-        reportsPage: (user) => `<div class="card rounded-xl shadow-lg border-0" style="background-color: var(--card-bg);"><div class="p-6 border-b border-inherit"><div class="flex justify-between items-start flex-wrap gap-4"><div class="flex items-center gap-4"><button id="back-to-users-btn" class="text-text-secondary hover:text-blue-500 w-8 h-8 rounded-lg hover:bg-slate-500/10 flex-shrink-0" title="Voltar para a lista"><i class="fas fa-arrow-left"></i></button><div><h3 class="text-xl font-bold">Relatório de: ${user.username}</h3><p id="report-total-hours" class="text-sm font-semibold text-text-secondary mt-1" style="display: none;"></p></div></div><div class="flex gap-2 flex-shrink-0"><button id="export-xlsx-btn" class="bg-green-600 text-white font-semibold rounded-lg h-9 px-4 text-sm flex items-center gap-2 hover:bg-green-700 transition-colors"><i class="fas fa-file-excel"></i>Excel</button><button id="export-pdf-btn" class="bg-red-600 text-white font-semibold rounded-lg h-9 px-4 text-sm flex items-center gap-2 hover:bg-red-700 transition-colors"><i class="fas fa-file-pdf"></i>PDF</button></div></div></div><div class="p-4 grid grid-cols-1 md:grid-cols-4 gap-4 items-end"><select id="status-filter-select" class="md:col-span-1 px-3 py-2 bg-slate-100 dark:bg-slate-800 border-transparent rounded-lg"><option value="">Todos Status</option><option value="completed">Completo</option><option value="pending">Pendente</option></select><input type="date" id="start-date-filter" class="md:col-span-1 px-3 py-2 bg-slate-100 dark:bg-slate-800 border-transparent rounded-lg"><input type="date" id="end-date-filter" class="md:col-span-1 px-3 py-2 bg-slate-100 dark:bg-slate-800 border-transparent rounded-lg"><button id="filter-btn" class="md-col-span-1 bg-blue-600 text-white font-semibold rounded-lg h-10 px-4 hover:bg-blue-700 transition-colors">Filtrar</button></div><div class="overflow-x-auto"><table class="min-w-full text-sm"><thead class="text-xs text-text-secondary uppercase bg-slate-50 dark:bg-slate-800/50"><tr><th class="px-6 py-3 text-left font-semibold">Entrada</th><th class="px-6 py-3 text-left font-semibold">Saída</th><th class="px-6 py-3 text-left font-semibold">Duração</th><th class="px-6 py-3 text-center font-semibold">Status</th><th class="px-6 py-3 text-center font-semibold">Ações</th></tr></thead><tbody id="reports-table-body" class="divide-y divide-inherit"></tbody></table></div></div>`,
+        reportsPage: (user, activeFilter) => `<div class="card rounded-xl shadow-lg border-0" style="background-color: var(--card-bg);"><div class="p-6 border-b border-inherit"><div class="flex justify-between items-start flex-wrap gap-4"><div class="flex items-center gap-4"><button id="back-to-users-btn" class="text-text-secondary hover:text-blue-500 w-8 h-8 rounded-lg hover:bg-slate-500/10 flex-shrink-0" title="Voltar para a lista"><i class="fas fa-arrow-left"></i></button><div><h3 class="text-xl font-bold">Relatório de: ${user.username}</h3><p id="report-total-hours" class="text-sm font-semibold text-text-secondary mt-1" style="display: none;"></p></div></div><div class="flex gap-2 flex-shrink-0"><button id="export-xlsx-btn" class="bg-green-600 text-white font-semibold rounded-lg h-9 px-4 text-sm flex items-center gap-2 hover:bg-green-700 transition-colors"><i class="fas fa-file-excel"></i>Excel</button><button id="export-pdf-btn" class="bg-red-600 text-white font-semibold rounded-lg h-9 px-4 text-sm flex items-center gap-2 hover:bg-red-700 transition-colors"><i class="fas fa-file-pdf"></i>PDF</button></div></div></div><div class="p-4 flex flex-col gap-4"><div class="flex items-center gap-2 flex-wrap"><span>Filtros Rápidos:</span><button id="qf-today" data-filter="today" class="quick-filter-btn px-3 py-1 text-sm font-semibold rounded-full bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors ${activeFilter === 'today' ? 'active' : ''}">Hoje</button><button id="qf-week" data-filter="week" class="quick-filter-btn px-3 py-1 text-sm font-semibold rounded-full bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors ${activeFilter === 'week' ? 'active' : ''}">Esta Semana</button><button id="qf-month" data-filter="month" class="quick-filter-btn px-3 py-1 text-sm font-semibold rounded-full bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors ${activeFilter === 'month' ? 'active' : ''}">Este Mês</button></div><div class="grid grid-cols-1 md:grid-cols-4 gap-4 items-end"><select id="status-filter-select" class="md:col-span-1 px-3 py-2 bg-slate-100 dark:bg-slate-800 border-transparent rounded-lg"><option value="">Todos Status</option><option value="completed">Completo</option><option value="pending">Pendente</option></select><input type="date" id="start-date-filter" class="md:col-span-1 px-3 py-2 bg-slate-100 dark:bg-slate-800 border-transparent rounded-lg"><input type="date" id="end-date-filter" class="md:col-span-1 px-3 py-2 bg-slate-100 dark:bg-slate-800 border-transparent rounded-lg"><button id="filter-btn" class="md-col-span-1 bg-blue-600 text-white font-semibold rounded-lg h-10 px-4 hover:bg-blue-700 transition-colors">Filtrar</button></div></div><div class="overflow-x-auto"><table class="min-w-full text-sm"><thead class="text-xs text-text-secondary uppercase bg-slate-50 dark:bg-slate-800/50"><tr><th class="px-6 py-3 text-left font-semibold">Entrada</th><th class="px-6 py-3 text-left font-semibold">Saída</th><th class="px-6 py-3 text-left font-semibold">Duração</th><th class="px-6 py-3 text-center font-semibold">Status</th><th class="px-6 py-3 text-center font-semibold">Ações</th></tr></thead><tbody id="reports-table-body" class="divide-y divide-inherit"></tbody></table></div></div>`,
         reportUserListPage: (users) => `<div class="card rounded-xl shadow-lg border-0" style="background-color: var(--card-bg);"><div class="p-6 border-b border-inherit"><h3 class="text-xl font-bold">Relatórios</h3><p class="text-sm text-text-secondary">Selecione um agente para ver seus registros de ponto.</p></div><div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 p-6">${users.map(u => `<a href="#" class="user-report-link card p-4 flex items-center gap-3 rounded-lg hover:bg-blue-500/10 transition-colors" data-userid="${u.userId}" data-username="${u.username}"><i class="fas fa-user-circle text-2xl text-text-secondary"></i><span class="font-semibold">${u.username}</span></a>`).join('')}</div></div>`,
         reportRow: (p, formatDuration) => { const iC = p.entrada && p.saida, d = iC ? (new Date(p.saida) - new Date(p.entrada)) : 0; return `<tr class="hover:bg-slate-50 dark:hover:bg-slate-800/60"><td class="p-4 px-6 text-text-secondary">${new Date(p.entrada).toLocaleString('pt-BR')}</td><td class="p-4 px-6 text-text-secondary">${p.saida ? new Date(p.saida).toLocaleString('pt-BR') : '<span class="italic text-slate-500">Em serviço...</span>'}</td><td class="p-4 px-6 font-semibold">${iC ? formatDuration(d) : '---'}</td><td class="p-4 px-6 text-center"><span class="px-2.5 py-0.5 text-xs font-semibold rounded-full ${iC ? 'bg-green-100 text-green-800 dark:bg-green-500/20 dark:text-green-300' : 'bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-300'}">${iC ? 'Completo' : 'Pendente'}</span></td><td class="p-4 px-6 text-center"><div class="flex justify-center gap-2">${!iC ? `<button data-username="${p.username}" class="force-logout-btn text-text-secondary hover:text-amber-500 w-8 h-8 rounded-lg hover:bg-slate-500/10" title="Forçar Saída"><i class="fas fa-clock"></i></button>` : ''}<button data-ponto='${JSON.stringify(p)}' class="edit-btn text-text-secondary hover:text-blue-500 w-8 h-8 rounded-lg hover:bg-slate-500/10" title="Editar"><i class="fas fa-pencil-alt"></i></button><button data-id="${p._id}" class="delete-btn text-text-secondary hover:text-red-500 w-8 h-8 rounded-lg hover:bg-slate-500/10" title="Excluir"><i class="fas fa-trash-alt"></i></button></div></td></tr>` },
         spreadsheetRow: (p, formatDuration) => { const iC = p.entrada && p.saida, d = iC ? (new Date(p.saida) - new Date(p.entrada)) : 0; return `<tr class="hover:bg-slate-50 dark:hover:bg-slate-800/60"><td class="p-4 px-6 font-medium">${p.username}</td><td class="p-4 px-6 text-text-secondary">${new Date(p.entrada).toLocaleString('pt-BR')}</td><td class="p-4 px-6 text-text-secondary">${p.saida ? new Date(p.saida).toLocaleString('pt-BR') : '<span class="italic text-slate-500">Em serviço...</span>'}</td><td class="p-4 px-6 font-semibold">${iC ? formatDuration(d) : '---'}</td><td class="p-4 px-6 text-center"><span class="px-2.5 py-0.5 text-xs font-semibold rounded-full ${iC ? 'bg-green-100 text-green-800 dark:bg-green-500/20 dark:text-green-300' : 'bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-300'}">${iC ? 'Completo' : 'Pendente'}</span></td><td class="p-4 px-6 text-center"><div class="flex justify-center gap-2">${!iC ? `<button data-username="${p.username}" class="force-logout-btn text-text-secondary hover:text-amber-500 w-8 h-8 rounded-lg hover:bg-slate-500/10" title="Forçar Saída"><i class="fas fa-clock"></i></button>` : ''}<button data-ponto='${JSON.stringify(p)}' class="edit-btn text-text-secondary hover:text-blue-500 w-8 h-8 rounded-lg hover:bg-slate-500/10" title="Editar"><i class="fas fa-pencil-alt"></i></button><button data-id="${p._id}" class="delete-btn text-text-secondary hover:text-red-500 w-8 h-8 rounded-lg hover:bg-slate-500/10" title="Excluir"><i class="fas fa-trash-alt"></i></button></div></td></tr>` },
